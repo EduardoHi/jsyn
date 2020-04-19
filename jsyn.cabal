@@ -60,8 +60,11 @@ executable jsyn
   build-depends:       base >=4.11 && <4.12,
                        aeson,
                        containers,
+                       unordered-containers,
                        bytestring,
-                       text
+                       text,
+                       vector,
+                       scientific
 
   -- Directories containing source files.
   hs-source-dirs:      src

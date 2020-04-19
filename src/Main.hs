@@ -8,9 +8,11 @@ import GHC.Generics
 
 import qualified Data.Aeson as A
 import qualified Data.ByteString.Lazy.Char8 as C
-import qualified Data.Map as M
+import qualified Data.HashMap.Strict as M
 import Data.Maybe
+import Data.Scientific
 import qualified Data.Text as T
+import qualified Data.Vector as V
 
 -- an Example is a pair of input and output json values
 data Example = Example {
@@ -37,18 +39,18 @@ instance A.FromJSON Example
 
 -- Values --------------------------------------------------------------------
 
-type Object = M.Map String Value
+type Object = M.HashMap T.Text Value
 
 data Value
   = Object !Object
   | Array ![Value] -- TODO: Vector might be better for indexing?
   | String !T.Text
-  | Number !Integer -- TODO: change Integer to a sane number thing lol
+  | Number !Int -- TODO: change Integer to a sane number thing lol
   | Bool !Bool
   | Null
   | Error String -- our addition to make no-ops explicit,
   -- in practice we should not construct invalid asts in our dsl
-  deriving (Eq, Show, Read)
+  deriving (Eq, Show) 
 
 isError :: Value -> Bool
 isError (Error _) = True
@@ -58,6 +60,27 @@ isString :: Value -> Bool
 isString (String _) = True
 isString _ = False
 
+valueToJsonVal :: Value -> A.Value
+valueToJsonVal x =
+  case x of
+    (Object o) -> A.Object $ M.map valueToJsonVal o
+    (Array l)  -> A.Array . V.fromList $ map valueToJsonVal l
+    (String t) -> A.String t
+    (Number n) -> A.Number (read $ show n :: Scientific)
+    (Bool b)   -> A.Bool b
+    Null       -> A.Null
+
+jsonValToValue :: A.Value -> Value
+jsonValToValue x =
+  case x of
+    (A.Object o) -> Object $ M.map jsonValToValue o
+    (A.Array v)  -> Array . V.toList $ V.map jsonValToValue v
+    (A.String t) -> String t
+    (A.Number n) -> maybe (Error "Unsupported Floats for now") Number (toBoundedInteger n)
+    (A.Bool b)   -> Bool b
+    A.Null       -> Null
+
+
 -- TODO: Boolean blindness in isError, isString, Functions :(
 -- it would be better to push that to the type level but idk how
 
@@ -66,7 +89,7 @@ fromString (String s) = s
 fromString v = T.pack $ "NOT A STRING: " ++ show v
 
 data Ty
-  = TObject (M.Map String Ty)
+  = TObject (M.HashMap String Ty)
   | TArray Ty
   | TString
   | TNumber
@@ -101,7 +124,7 @@ data TFilter
   | Get TFilter
   | Construct [(TFilter, TFilter)]
   | Pipe TFilter TFilter
-  deriving (Read,Show)
+  deriving (Show)
 
 eval :: TFilter -> Value -> Value
 eval x val = case x of
@@ -118,7 +141,7 @@ get :: Value -> Object -> Value
 get (String t) obj =
   fromMaybe
   (Error $ "key: " ++ T.unpack t ++ "not found")
-  (obj M.!? T.unpack t)
+  (t `M.lookup` obj)
 get notstr _ = Error $ "value: " ++ show notstr ++ "in get is not a string"
 
 construct :: Value -> [(TFilter, TFilter)] -> Value
@@ -127,7 +150,7 @@ construct val fs =
       vls = map (flip eval val . snd) fs
   in
     if all isString kys
-    then Object . M.fromList $ zip (map (T.unpack . fromString) kys) vls
+    then Object . M.fromList $ zip (map fromString kys) vls
     else Error $ "Some filters in the keys returned other thing other than string: " ++ show kys
 
 pipe :: Value -> TFilter -> TFilter -> Value
@@ -143,14 +166,27 @@ process content =
   case A.eitherDecode content :: Either String [Example] of
          Left s -> putStrLn s
          Right es -> do
-           C.putStrLn (A.encode (map input es))
+           C.putStrLn (A.encode (map (f . input) es))
            C.putStrLn (A.encode (map output es))
+  where f e =
+          valueToJsonVal $ eval f1 $ jsonValToValue e
+
+f1 :: TFilter
+f1 = Construct
+  [ (sf, Get sf)
+  , (sd, Get sd)
+  ]
+  where sf = Const (String "foo")
+        sd = Const (String "data")
+
 
 pro_ex1 :: IO ()
 pro_ex1 = process "[{\"input\":1,\"output\":2}]"
 
 pro_ex2 :: IO ()
 pro_ex2 = process "[{\"input\":1,\"output\":2}, { \"input\":3, \"output\":4 }]"
+
+
 
 main :: IO ()
 main = do
