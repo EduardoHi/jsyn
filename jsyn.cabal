@@ -52,7 +52,8 @@ common dependencies
                  bytestring,
                  text,
                  vector,
-                 scientific
+                 scientific,
+                 hspec
 
 executable jsyn
   import: dependencies
@@ -75,7 +76,7 @@ executable jsyn
   -- Base language which the package is written in.
   default-language:    Haskell2010
 
-test-suite tests
+test-suite all-tests
   import: dependencies
   type:                exitcode-stdio-1.0
   main-is:             Spec.hs
@@ -83,7 +84,6 @@ test-suite tests
   other-modules: Jsyn
 
   build-depends:       base >=4.11 && <4.12,
-                       hspec
 
   -- Base language which the package is written in.
   default-language:    Haskell2010

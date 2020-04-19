@@ -33,7 +33,7 @@ pro_ex2 = process "[{\"input\":1,\"output\":2}, { \"input\":3, \"output\":4 }]"
 
 process :: C.ByteString -> IO ()
 process content = 
-  case A.eitherDecode content :: Either String [Example] of
+  case decodeJsonExamples content of
          Left s -> putStrLn s
          Right es -> do
            C.putStrLn (A.encode (map (f . input) es))

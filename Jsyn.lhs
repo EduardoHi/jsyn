@@ -20,21 +20,26 @@ import qualified Data.Vector as V
 \end{code}
 
 Since jsyn is a tool for Programming by Example,
-we need to represent an example. An Example is a pair of
+we need to represent an example. An JsonExample is a pair of
 input and output json values. This datatype can be encoded
 and decoded from json.
 The ToJSON and FromJSON instances are just how the
 Aeson documentation suggests.
 \begin{code}
-data Example = Example {
+data JsonExample = JsonExample {
   input :: A.Value
   , output :: A.Value
   } deriving (Generic, Show)
 
-instance A.ToJSON Example where
+instance A.ToJSON JsonExample where
     toEncoding = A.genericToEncoding A.defaultOptions
 
-instance A.FromJSON Example
+instance A.FromJSON JsonExample
+
+decodeJsonExamples :: C.ByteString -> Either String [JsonExample]
+decodeJsonExamples content =
+  A.eitherDecode content :: Either String [JsonExample]
+
 \end{code}
 
 From what I've learned following 
