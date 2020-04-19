@@ -1,3 +1,5 @@
+
+\begin{code}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
 
@@ -14,30 +16,44 @@ import Data.Scientific
 import qualified Data.Text as T
 import qualified Data.Vector as V
 
--- an Example is a pair of input and output json values
+\end{code}
+
+Since jsyn is a tool for Programming by Example,
+we need to represent an example. An Example is a pair of
+input and output json values. This datatype can be encoded
+and decoded from json.
+The ToJSON and FromJSON instances are just how the
+Aeson documentation suggests.
+\begin{code}
 data Example = Example {
   input :: A.Value
   , output :: A.Value
   } deriving (Generic, Show)
 
 instance A.ToJSON Example where
-    -- No need to provide a toJSON implementation.
-
-    -- For efficiency, we write a simple toEncoding implementation, as
-    -- the default version uses toJSON.
     toEncoding = A.genericToEncoding A.defaultOptions
 
 instance A.FromJSON Example
-    -- No need to provide a parseJSON implementation.
+\end{code}
 
--- From what I've learned, a language should have:
--- values
--- terms
--- types
---
--- Then, you define operational semantics, and typing relations
+From what I've learned following 
+Programming Languages Foundations: https://softwarefoundations.cis.upenn.edu/
+A definition of a language should have:
+- Terms and Values
+- Types
 
--- Values --------------------------------------------------------------------
+Operational semantics:
+- Reductions
+
+Typing Relation
+- Progress, Preservation
+- inference rules
+- terms to types
+- subtyping
+
+** Values
+
+\begin{code}
 
 type Object = M.HashMap T.Text Value
 
@@ -60,6 +76,9 @@ isString :: Value -> Bool
 isString (String _) = True
 isString _ = False
 
+-- TODO: Boolean blindness in isError, isString, Functions :(
+-- it would be better to push that to the type level but idk how
+
 valueToJsonVal :: Value -> A.Value
 valueToJsonVal x =
   case x of
@@ -80,13 +99,26 @@ jsonValToValue x =
     (A.Bool b)   -> Bool b
     A.Null       -> Null
 
-
--- TODO: Boolean blindness in isError, isString, Functions :(
--- it would be better to push that to the type level but idk how
-
 fromString :: Value -> T.Text
 fromString (String s) = s
 fromString v = T.pack $ "NOT A STRING: " ++ show v
+
+\end{code}
+
+** Types
+
+A Type represents a subset of possible values, I visualize it as a way 
+of abstracting information, and thinking about sets instead of particular values.
+
+An important thing to notice is that in this typing scheme we assume that
+the Arrays are homogenous and they contain the same type in every position,
+but this is not the case either the json spec, nor in real life jsons.
+This is a place for improvement for the project, and has room for experimentation.
+
+Another important thing to note is that the type of an object is defined
+by the name of the keys and the type of each value.
+
+\begin{code}
 
 data Ty
   = TObject (M.HashMap String Ty)
@@ -97,27 +129,38 @@ data Ty
   | TNull
   deriving (Eq, Show, Read)
 
+\end{code}
 
--- DSL ----------------------------------------------------------------
+** DSL 
 
--- It might change eventually, but a Stream for now is simply a Haskell list
+This DSL is inspired in jq.
+
+Our main terms are Streams and Filters.
+
+
+A Stream for now is simply a Haskell List.
+the most common stream, is a stream of json values
+
+A filter is a function from json values to either a value or a stream,
+filters are parametrized on the type of streams they might produce
+but not in the type they receive (they always receive values)
+this is in part inspired by the robustness principle:
+"Be conservative in what you send, be liberal in what you accept"
+
+TODO: Stream can be better represented as a NonEmpty List instead of the Either value
+and that simplifies things
+
+TODO: Filters should be datatypes interpreted as functions, but we need a value
+representation higher than haskell functions, to eventually synthetize those to js for example.
+TFilter is the datatype that represents a Filter will replace the unused Filter type
+\begin{code}
+
 type Stream a = [a]
 
--- the most common stream, is a stream of json values
 type ValueStream = Stream Value
 
--- a filter is a function from json values to either a value or a stream,
--- filters are parametrized on the type of streams they might produce
--- but not in the type they receive (they always receive values)
 type Filter out = Value -> Either Value (Stream out)
 
--- TODO: Stream can be better represented as a NonEmpty List instead of the Either value
--- and that simplifies things
-
--- TODO: Filters should be datatypes interpreted as functions, but we need a value
--- representation higher than haskell functions, to eventually synthetize those to js for example.
-
--- TFilter is the datatype that represents a Filter 
 data TFilter
   = Id
   | Const Value
@@ -125,6 +168,18 @@ data TFilter
   | Construct [(TFilter, TFilter)]
   | Pipe TFilter TFilter
   deriving (Show)
+
+\end{code}
+
+** Evaluation
+
+'eval' interprets a filter against a value and returns a value
+this can be seen as the "Haskell" interpretation of the DSL
+to be used during the search to find the correct programs.
+This can also be seen as the spec of the semantics of the DSL,
+since I'm not going to formalize it with math.
+
+\begin{code}
 
 eval :: TFilter -> Value -> Value
 eval x val = case x of
@@ -135,7 +190,6 @@ eval x val = case x of
              _ -> Error $ "Get of value :" ++ show val ++ " that is not an object"
   Construct fs -> construct val fs
   Pipe f g -> pipe val f g
-    
 
 get :: Value -> Object -> Value
 get (String t) obj =
@@ -157,9 +211,31 @@ pipe :: Value -> TFilter -> TFilter -> Value
 pipe v f g =
   eval f $ eval g v
 
+\end{code}
 
--- End of DSL --------------------------------------------------------------------
+* Examples
 
+\begin{code}
+
+f1 :: TFilter
+f1 = Construct
+  [ (sf, Get sf)
+  , (sd, Get sd)
+  ]
+  where sf = Const (String "foo")
+        sd = Const (String "data")
+
+pro_ex1 :: IO ()
+pro_ex1 = process "[{\"input\":1,\"output\":2}]"
+
+pro_ex2 :: IO ()
+pro_ex2 = process "[{\"input\":1,\"output\":2}, { \"input\":3, \"output\":4 }]"
+
+\end{code}
+
+* IO
+
+\begin{code}
 
 process :: C.ByteString -> IO ()
 process content = 
@@ -171,24 +247,9 @@ process content =
   where f e =
           valueToJsonVal $ eval f1 $ jsonValToValue e
 
-f1 :: TFilter
-f1 = Construct
-  [ (sf, Get sf)
-  , (sd, Get sd)
-  ]
-  where sf = Const (String "foo")
-        sd = Const (String "data")
-
-
-pro_ex1 :: IO ()
-pro_ex1 = process "[{\"input\":1,\"output\":2}]"
-
-pro_ex2 :: IO ()
-pro_ex2 = process "[{\"input\":1,\"output\":2}, { \"input\":3, \"output\":4 }]"
-
-
-
 main :: IO ()
 main = do
   content <- C.getContents
   process content
+
+\end{code}
