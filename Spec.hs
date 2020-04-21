@@ -14,21 +14,24 @@ import qualified Data.Text as T
 import           Text.Printf
 import Data.HashMap.Strict (fromList)
 
-
-readInputValues :: IO [Value]
-readInputValues = do
-  content <- C.readFile "examples/example1.json"
+readInputOutputPairs :: String -> IO [(Value,Value)]
+readInputOutputPairs filename = do
+  content <- C.readFile filename
   case decodeJsonExamples content of
     Left s -> fail $ "Error decoding json: " <> s
-    Right v -> pure $ map (jsonValToValue . input) v
+    Right v -> pure $ map (\v -> (jsonValToValue $ input v , jsonValToValue $ output v)) v
+  
 
-filter1 :: TFilter
-filter1 = Construct
+-- | cstring little helper to build Constant Strings in the DSL
+cstring = Const . String
+
+filter_ex1 :: TFilter
+filter_ex1 = Construct
           [ (sf, Get sf)
           , (sd, Get sd)
           ]
-  where sf = Const (String "foo")
-        sd = Const (String "data")
+  where sf = cstring "foo"
+        sd = cstring "data"
 
 output_values :: [Value]
 output_values = [
@@ -42,11 +45,81 @@ output_values = [
            ("foo",String "bar2")])
   ]
 
+filter1 :: TFilter
+filter1 = Id
+
+filter2 :: TFilter
+filter2 = Construct
+          [ (Get sc, sc)
+          , (Get ss, ss)
+          ]
+  where sc = cstring "Chicago"
+        ss = cstring "Seattle"
+
+filter3 :: TFilter
+filter3 = Construct
+          [ (Get $ cstring "key",
+              Construct
+              [ (cstring "host", Get $ cstring "host")
+              , (cstring "name", Get $ cstring "name")
+              ]
+            )
+          ]
+
+-- TODO: when eval becomes streams, this should be possible !
+filter4 :: TFilter
+filter4 = Id
+
+filter5 :: TFilter
+filter5 = Get $ cstring "age"
+
+-- TODO: This would fail with objects that share a key but have different fields
+-- a more succint way is for the DSL to have a Del operation
+filter6 :: TFilter
+filter6 = Construct
+          [ (cstring "age", Get $ cstring "age")
+          , (cstring "gpa", Get $ cstring "gpa")
+          ]
+
+testCases :: [(String, TFilter, IO [(Value, Value)])]
+testCases =
+  [ ("identity filter",
+     filter1,
+     readInputOutputPairs "tests/test1.json")
+
+  -- Can this be generic enough to not need the specific key names ?
+  , ( "swap every key for its value"
+    , filter2
+    , readInputOutputPairs "tests/test2.json")
+
+  , ( "nest an object inside a a key from the field 'key'"
+    , filter3
+    , readInputOutputPairs "tests/test3.json")
+
+  , ( "denest an object (inverse operation of filter3)"
+    , filter4
+    , readInputOutputPairs "tests/test4.json")
+
+  , ( "get a single field from an object"
+    , filter5
+    , readInputOutputPairs "tests/test5.json")
+
+  , ( "get all but a single field from an object"
+    , filter6
+    , readInputOutputPairs "tests/test6.json")
+    
+  ]
+
+testFilter name filter ios = do
+  describe ("filter: " <> name) $ do
+    forM_  (zip [1..] ios) $ \(n, (input, output)) ->
+      it ("example #" <> show n <> " evaluates correctly") $ do
+      eval filter input == output
+
+
 main :: IO ()
 main = hspec $ do
-  input_values <- runIO readInputValues
-  
-  forM_  (zip input_values output_values) $ \(input, output) ->
-    it "evaluates" $
-      eval filter1 input == output
-                            
+
+  forM_ testCases $ \(name, f, readios) -> do
+    ios <- runIO readios
+    testFilter name f ios

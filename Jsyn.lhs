@@ -169,6 +169,8 @@ type Filter out = Value -> Either Value (Stream out)
 
 data TFilter
   = Id
+  | Keys
+  | Elements
   | Const Value
   | Get TFilter
   | Construct [(TFilter, TFilter)]
@@ -196,6 +198,18 @@ eval x val = case x of
              _ -> Error $ "Get of value :" ++ show val ++ " that is not an object"
   Construct fs -> construct val fs
   Pipe f g -> pipe val f g
+  Keys -> keys val
+  Elements -> elements val
+
+-- TODO eval should return a stream of values ! so that keys and elements do not
+-- return an json array but a stream of values
+-- this is wrong :(
+keys (Object o) = Array $ map String $ M.keys o
+keys val = Error $ "called keys of value: " ++ show val ++ "that is not an object"
+
+elements (Object o) = Array $ M.elems o
+elements val = Error $ "called elems of value: " ++ show val ++ "that is not an object"
+  
 
 get :: Value -> Object -> Value
 get (String t) obj =
