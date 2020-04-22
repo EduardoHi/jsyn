@@ -57,7 +57,7 @@ filter3 = Construct
             )
           ]
 
--- TODO: when eval becomes streams, this should be possible !
+-- equivalent to this jq filter: {key: (keys | .[]) } + .[]
 filter4 :: TFilter
 filter4 = Union
           (Construct [(cstring "key", Keys)])

@@ -74,16 +74,6 @@ data Val
   | Error String
   deriving (Eq, Show)
 
--- data Value
---   = Object !Object
---   | Array ![Value] -- TODO: Vector might be better for indexing?
---   | String !T.Text
---   | Number !Int -- TODO: change Integer to a sane number thing lol
---   | Bool !Bool
---   | Null
---   | Error String 
---   deriving (Eq, Show) 
-
 isError :: Val -> Bool
 isError (Error _) = True
 isError _ = False
@@ -146,9 +136,8 @@ this is in part inspired by the robustness principle:
 TODO: Stream can be better represented as a NonEmpty List instead of the Either value
 and that simplifies things
 
-TODO: Filters should be datatypes interpreted as functions, but we need a value
-representation higher than haskell functions, to eventually synthetize those to js for example.
-TFilter is the datatype that represents a Filter will replace the unused Filter type
+In the implementation, filters are a datatype, so that it can be manipulated
+as data and also be executed with it's corresponding haskell functions.
 \begin{code}
 
 type Stream a = [a]
