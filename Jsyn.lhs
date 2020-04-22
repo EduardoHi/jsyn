@@ -16,7 +16,9 @@ import           Data.Either
 import qualified Data.HashMap.Strict as M
 import           Data.Maybe
 import           Data.Scientific
+import           Data.Semigroup
 import qualified Data.Text as T
+import           Data.Text.Encoding as E
 import qualified Data.Vector as V
 
 \end{code}
@@ -78,7 +80,7 @@ isError :: Val -> Bool
 isError (Error _) = True
 isError _ = False
 
--- isString :: Val -> Bool
+isString :: Value -> Bool
 isString (A.String _) = True
 isString _ = False
 
@@ -150,6 +152,14 @@ data TFilter
   | Pipe TFilter TFilter
   deriving (Show)
 
+fromConstString :: TFilter -> T.Text
+fromConstString (Const (A.String s)) = s
+fromConstString _ = error "not a Const String"
+
+isConstString :: TFilter -> Bool
+isConstString (Const (A.String _)) = True
+isConstString _ = False
+
 \end{code}
 
 ** Evaluation
@@ -219,5 +229,64 @@ union val f g =
     (A.Object o1, A.Object o2) -> A.Object (o1 `M.union` o2)
     (_, A.Object _           ) -> error "Left hand side of union is not an Object"
     (A.Object _,_            ) -> error "Right hand side of union is not an Object"
+
+\end{code}
+
+A Program is what we finally want to have, a function wrapping the filter and returning it:
+```js
+function program(obj) {
+  return filter(obj)
+}
+```
+
+\begin{code}
+
+newtype Program = Program { programBody :: TFilter }
+
+toJS :: Program -> T.Text
+toJS Program{programBody = body} = T.unlines
+                                   [ "function program(obj) {"
+                                   , "return " <> toJSInline "obj" body
+                                   , "}"
+                                   ]
+\end{code}
+
+toJSInline converts TFilters to Javascript code
+
+Since the TFilters have an implicit arg, when we print we need to "thread"
+that arg down the tree, and up in the assignments. in the case of the
+inlined, the argument is always the same.
+
+\begin{code}
+
+toJSInline :: T.Text -> TFilter -> T.Text
+toJSInline s x =
+  case x of
+    (Const v) -> E.decodeUtf8 . C.toStrict $ A.encode v
+    Id -> s
+    Keys -> "Object.keys(" <> s <> ")"
+    Elements -> "Object.values(" <> s <> ")"
+
+    (Get f) -> if isConstString f && (isValidAsKey $ fromConstString f)
+               then s <> "." <> fromConstString f
+               else s <> "[" <> f' <> "]"
+      where f' = toJSInline s f
+    (Construct fs) ->
+      "{"  <> inlinePairs <> "}"
+      where inlinePairs = T.intercalate ", " $ map go fs
+            go (k,v) = treatKey k <> ":" <> toJSInline s v
+            treatKey kstr =
+              if isConstString kstr && (isValidAsKey $ fromConstString kstr)
+              then toJSInline s kstr
+              else "[" <> toJSInline s kstr <> "]"
+    (Union f g) -> "Object.assign(" <> f' <> ", " <> g' <> ")"
+      where f' = toJSInline s f
+            g' = toJSInline s g
+    (Pipe f g) -> f' <> "(" <> g' <> ")"
+      where f' = toJSInline s f
+            g' = toJSInline s g
+
+-- A valid string for a key does not have spaces or double quotes
+isValidAsKey st = not $ T.any (\x -> x == ' ' || x == '"') st
 
 \end{code}
