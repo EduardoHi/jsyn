@@ -1,0 +1,12 @@
+[
+  {
+    "input": {
+      "name": "Eduardo",
+      "age": 22
+    },
+    "output": {
+      "name": "Eduardo",
+      "age": 22
+    }
+  }
+]

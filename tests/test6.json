@@ -1,0 +1,13 @@
+[
+  {
+    "input": {
+      "name": "John",
+      "age": 20,
+      "gpa": 4.0
+    },
+    "output": {
+      "age": 20,
+      "gpa": 4.0
+    }
+  }
+]
