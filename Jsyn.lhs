@@ -121,11 +121,10 @@ data Ty
 
 This DSL is inspired in jq.
 
-Our main terms are Streams and Filters.
+but for simplicity I won't add streams, this simplifies the DSL, the type system, inference
+synthesis and the output programs.
 
-
-A Stream for now is simply a Haskell List.
-the most common stream, is a stream of json values
+Our main terms are Filters and Values.
 
 A filter is a function from json values to either a value or a stream,
 filters are parametrized on the type of streams they might produce
@@ -133,14 +132,9 @@ but not in the type they receive (they always receive values)
 this is in part inspired by the robustness principle:
 "Be conservative in what you send, be liberal in what you accept"
 
-TODO: Stream can be better represented as a NonEmpty List instead of the Either value
-and that simplifies things
-
 In the implementation, filters are a datatype, so that it can be manipulated
 as data and also be executed with it's corresponding haskell functions.
 \begin{code}
-
-type Stream a = [a]
 
 data TFilter
   = Const Value
@@ -168,12 +162,10 @@ since I'm not going to formalize it with math.
 
 \begin{code}
 
-type EvalRes = Either Value (Stream Value)
-
-eval :: TFilter -> Value -> EvalRes
+eval :: TFilter -> Value -> Value
 eval x val = case x of
-  Id           -> Left val
-  Const v      -> Left v
+  Id           -> val
+  Const v      -> v
   Get f        -> get val f 
   Construct fs -> construct val fs
   Pipe f g     -> pipe val f g
@@ -181,13 +173,13 @@ eval x val = case x of
   Elements     -> elements val
   Union f g    -> union val f g
 
-keys :: Value -> EvalRes
+keys :: Value -> Value
 keys (A.Object o) =
-  Right $ map A.String $ M.keys o
+  A.Array . V.fromList $ map A.String $ M.keys o
 keys val = error $ "called keys of value: " ++ show val ++ "that is not an object"
 
-elements :: Value -> EvalRes
-elements (A.Object o) = Right $ M.elems o
+elements :: Value -> Value
+elements (A.Object o) = A.Array . V.fromList $ M.elems o
 elements val = error $ "called elems of value: " ++ show val ++ "that is not an object"
 
 -- | val : the value from eval
@@ -196,60 +188,36 @@ elements val = error $ "called elems of value: " ++ show val ++ "that is not an 
 -- 1. eval the filter with the current value
 -- if it is a single value:
 -- 2. if it's
-get :: Value -> TFilter -> EvalRes
+get :: Value -> TFilter -> Value
 get val f =
-  either (Left . fv) (Right . map fv) (eval f val)
+  case eval f val of
+    A.String v -> getVal v
+    _ -> error "Can't use a non-string as key"
   where
-    fv :: Value -> Value
-    fv vak = case vak of
-               A.String v -> getVal v
-               _ -> error "Can't use a non-string as key"
     getVal :: T.Text -> Value
     getVal v = case val of
                  A.Object o -> (o M.! v)
                  _ -> error $ "value: " ++ show val ++ "is not an object" 
 
 
-cartProd :: [a] -> [b] -> [(a, b)]
-cartProd xs ys = [ (x,y) | x <- xs, y <- ys ]
-
--- |
--- >> λ> weird_prod [([1,2],[3,4]), ([5,6], [7,8]), ([9], [10])]
--- >> [[(1,3),(5,7),(9,10)],[(1,3),(5,8),(9,10)],[(1,3),(6,7),(9,10)],[(1,3),(6,8),(9,10)],[(1,4),(5,7),(9,10)],[(1,4),(5,8),(9,10)],[(1,4),(6,7),(9,10)],[(1,4),(6,8),(9,10)],[(2,3),(5,7),(9,10)],[(2,3),(5,8),(9,10)],[(2,3),(6,7),(9,10)],[(2,3),(6,8),(9,10)],[(2,4),(5,7),(9,10)],[(2,4),(5,8),(9,10)],[(2,4),(6,7),(9,10)],[(2,4),(6,8),(9,10)]]
--- weirdProd :: Monad m => [(m a, m b)] -> m [(a, b)]
-weirdProd :: [([a], [b])] -> [[(a, b)]]
-weirdProd xs = mapM (uncurry cartProd) xs
-
-construct :: Value -> [(TFilter, TFilter)] -> EvalRes
+construct :: Value -> [(TFilter, TFilter)] -> Value
 construct val fs =
   let kys = map (flip eval val . fst) fs
       vls = map (flip eval val . snd) fs
-      -- kys' and vls' hold lists instead of eithers. left is a singleton list
-      kys' = map (either return id) kys
-      vls' = map (either return id) vls
-      kvs = zip kys' vls'
   in
-    Right $ map (\l -> A.Object $ M.fromList $ map (first fromString) l) $ weirdProd kvs
+    if all isString kys
+    then A.Object . M.fromList $ zip (map fromString kys) vls
+    else error $ " keys have a value that is not a string: " ++ (show $ head $ takeWhile isString kys)
 
-pipe :: Value -> TFilter -> TFilter -> EvalRes
+pipe :: Value -> TFilter -> TFilter -> Value
 pipe v f g =
-  case eval g v of
-    Left v' -> eval f v'
-    Right vs -> let vs' = map (eval f) vs
-                in Right $ concatMap (either pure id) vs'
+  eval f $ eval g v
 
-union :: Value -> TFilter -> TFilter -> EvalRes
+union :: Value -> TFilter -> TFilter -> Value
 union val f g =
   case (eval f val, eval g val) of
-    (Left v, Left w    ) -> Left $ union_obj v w
-    (Left v, Right ws  ) -> Right $ map (union_obj v) ws
-    (Right vs, Left w  ) -> Right $ map (flip union_obj w) vs
-    (Right vs, Right ws) -> Right $ concatMap (\v -> map (union_obj v) ws) vs
-  where
-    union_obj :: Value -> Value -> Value
-    union_obj obj1 obj2 = case (obj1,obj2) of
-                      (A.Object o1, A.Object o2) -> A.Object (o1 `M.union` o2)
-                      (_, A.Object _           ) -> error "Left hand side of union is not an Object"
-                      (A.Object _,_            ) -> error "Right hand side of union is not an Object"
+    (A.Object o1, A.Object o2) -> A.Object (o1 `M.union` o2)
+    (_, A.Object _           ) -> error "Left hand side of union is not an Object"
+    (A.Object _,_            ) -> error "Right hand side of union is not an Object"
 
 \end{code}

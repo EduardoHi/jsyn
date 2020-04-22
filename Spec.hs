@@ -108,11 +108,7 @@ testFilter name filter ios = do
   describe ("filter: " <> name) $ do
     forM_  (zip [1..] ios) $ \(n, (input, output)) ->
       it ("example #" <> show n <> " evaluates correctly") $ do
-      -- TODO: make a specific eval with only single value outputs
-      let output' = case eval filter input of
-                      Left x -> x
-                      Right xs -> head xs
-        in output' == output
+        eval filter input == output
 main :: IO ()
 main = hspec $ do
 
