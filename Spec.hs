@@ -3,27 +3,30 @@
 
 module Main where
 
-import Test.Hspec
+import           Test.Hspec
 
-import Jsyn
+import           Jsyn
 
 import           Control.Monad
 import           Data.Semigroup
 import qualified Data.ByteString.Lazy.Char8 as C
 import qualified Data.Text as T
-import           Text.Printf
-import Data.HashMap.Strict (fromList)
+import           Data.HashMap.Strict (fromList)
+import qualified Data.Aeson as A
+import           Data.Either
 
-readInputOutputPairs :: String -> IO [(Value,Value)]
+import           Text.Printf
+
+readInputOutputPairs :: String -> IO [(A.Value,A.Value)]
 readInputOutputPairs filename = do
   content <- C.readFile filename
   case decodeJsonExamples content of
     Left s -> fail $ "Error decoding json: " <> s
-    Right v -> pure $ map (\v -> (jsonValToValue $ input v , jsonValToValue $ output v)) v
+    Right v -> pure $ map (\v -> (input v , output v)) v
   
 
 -- | cstring little helper to build Constant Strings in the DSL
-cstring = Const . String
+cstring = Const . A.String
 
 filter_ex1 :: TFilter
 filter_ex1 = Construct
@@ -32,18 +35,6 @@ filter_ex1 = Construct
           ]
   where sf = cstring "foo"
         sd = cstring "data"
-
-output_values :: [Value]
-output_values = [
-  Object (fromList
-          [("data",Array [Object (fromList [("a",Number 1)]),
-                          Object (fromList [("b",Number 2)])]),
-           ("foo",String "bar1")]),
-  Object (fromList
-          [("data",Array [Object (fromList [("a",Number 1)]),
-                          Object (fromList [("b",Number 2)])]),
-           ("foo",String "bar2")])
-  ]
 
 filter1 :: TFilter
 filter1 = Id
@@ -68,7 +59,9 @@ filter3 = Construct
 
 -- TODO: when eval becomes streams, this should be possible !
 filter4 :: TFilter
-filter4 = Id
+filter4 = Union
+          (Construct [(cstring "key", Keys)])
+          Elements
 
 filter5 :: TFilter
 filter5 = Get $ cstring "age"
@@ -81,7 +74,7 @@ filter6 = Construct
           , (cstring "gpa", Get $ cstring "gpa")
           ]
 
-testCases :: [(String, TFilter, IO [(Value, Value)])]
+testCases :: [(String, TFilter, IO [(A.Value, A.Value)])]
 testCases =
   [ ("identity filter",
      filter1,
@@ -110,13 +103,16 @@ testCases =
     
   ]
 
+testFilter :: String -> TFilter -> [(A.Value, A.Value)] -> SpecWith ()
 testFilter name filter ios = do
   describe ("filter: " <> name) $ do
     forM_  (zip [1..] ios) $ \(n, (input, output)) ->
       it ("example #" <> show n <> " evaluates correctly") $ do
-      eval filter input == output
-
-
+      -- TODO: make a specific eval with only single value outputs
+      let output' = case eval filter input of
+                      Left x -> x
+                      Right xs -> head xs
+        in output' == output
 main :: IO ()
 main = hspec $ do
 

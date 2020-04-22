@@ -6,14 +6,16 @@
 module Jsyn where
 
 
-import GHC.Generics
+import           GHC.Generics
 
 
 import qualified Data.Aeson as A
+import           Data.Bifunctor (first)
 import qualified Data.ByteString.Lazy.Char8 as C
+import           Data.Either
 import qualified Data.HashMap.Strict as M
-import Data.Maybe
-import Data.Scientific
+import           Data.Maybe
+import           Data.Scientific
 import qualified Data.Text as T
 import qualified Data.Vector as V
 
@@ -61,53 +63,41 @@ Typing Relation
 
 \begin{code}
 
-type Object = M.HashMap T.Text Value
+type Object = A.Object
+type Value = A.Value
 
-data Value
-  = Object !Object
-  | Array ![Value] -- TODO: Vector might be better for indexing?
-  | String !T.Text
-  | Number !Int -- TODO: change Integer to a sane number thing lol
-  | Bool !Bool
-  | Null
-  | Error String -- our addition to make no-ops explicit,
-  -- in practice we should not construct invalid asts in our dsl
-  deriving (Eq, Show) 
 
-isError :: Value -> Bool
+data Val
+  = JsonVal A.Value
+-- our addition to make no-ops explicit,
+-- in practice we should not construct invalid asts in our dsl
+  | Error String
+  deriving (Eq, Show)
+
+-- data Value
+--   = Object !Object
+--   | Array ![Value] -- TODO: Vector might be better for indexing?
+--   | String !T.Text
+--   | Number !Int -- TODO: change Integer to a sane number thing lol
+--   | Bool !Bool
+--   | Null
+--   | Error String 
+--   deriving (Eq, Show) 
+
+isError :: Val -> Bool
 isError (Error _) = True
 isError _ = False
 
-isString :: Value -> Bool
-isString (String _) = True
+-- isString :: Val -> Bool
+isString (A.String _) = True
 isString _ = False
 
 -- TODO: Boolean blindness in isError, isString, Functions :(
 -- it would be better to push that to the type level but idk how
 
-valueToJsonVal :: Value -> A.Value
-valueToJsonVal x =
-  case x of
-    (Object o) -> A.Object $ M.map valueToJsonVal o
-    (Array l)  -> A.Array . V.fromList $ map valueToJsonVal l
-    (String t) -> A.String t
-    (Number n) -> A.Number (read $ show n :: Scientific)
-    (Bool b)   -> A.Bool b
-    Null       -> A.Null
-
-jsonValToValue :: A.Value -> Value
-jsonValToValue x =
-  case x of
-    (A.Object o) -> Object $ M.map jsonValToValue o
-    (A.Array v)  -> Array . V.toList $ V.map jsonValToValue v
-    (A.String t) -> String t
-    (A.Number n) -> maybe (Error "Unsupported Floats for now") Number (toBoundedInteger n)
-    (A.Bool b)   -> Bool b
-    A.Null       -> Null
-
 fromString :: Value -> T.Text
-fromString (String s) = s
-fromString v = T.pack $ "NOT A STRING: " ++ show v
+fromString (A.String s) = s
+fromString v = error $ "value is not a string" ++ show v
 
 \end{code}
 
@@ -163,17 +153,17 @@ TFilter is the datatype that represents a Filter will replace the unused Filter 
 
 type Stream a = [a]
 
-type ValueStream = Stream Value
-
-type Filter out = Value -> Either Value (Stream out)
-
 data TFilter
-  = Id
+  = Const Value
+  -- /1 arity functions
+  | Id
   | Keys
   | Elements
-  | Const Value
+  -- /2 arity functions
   | Get TFilter
   | Construct [(TFilter, TFilter)]
+  -- /3 arity functions
+  | Union TFilter TFilter
   | Pipe TFilter TFilter
   deriving (Show)
 
@@ -189,46 +179,88 @@ since I'm not going to formalize it with math.
 
 \begin{code}
 
-eval :: TFilter -> Value -> Value
+type EvalRes = Either Value (Stream Value)
+
+eval :: TFilter -> Value -> EvalRes
 eval x val = case x of
-  Id -> val
-  Const v -> v
-  Get f -> case val of
-             Object o -> get (eval f val) o
-             _ -> Error $ "Get of value :" ++ show val ++ " that is not an object"
+  Id           -> Left val
+  Const v      -> Left v
+  Get f        -> get val f 
   Construct fs -> construct val fs
-  Pipe f g -> pipe val f g
-  Keys -> keys val
-  Elements -> elements val
+  Pipe f g     -> pipe val f g
+  Keys         -> keys val
+  Elements     -> elements val
+  Union f g    -> union val f g
 
--- TODO eval should return a stream of values ! so that keys and elements do not
--- return an json array but a stream of values
--- this is wrong :(
-keys (Object o) = Array $ map String $ M.keys o
-keys val = Error $ "called keys of value: " ++ show val ++ "that is not an object"
+keys :: Value -> EvalRes
+keys (A.Object o) =
+  Right $ map A.String $ M.keys o
+keys val = error $ "called keys of value: " ++ show val ++ "that is not an object"
 
-elements (Object o) = Array $ M.elems o
-elements val = Error $ "called elems of value: " ++ show val ++ "that is not an object"
-  
+elements :: Value -> EvalRes
+elements (A.Object o) = Right $ M.elems o
+elements val = error $ "called elems of value: " ++ show val ++ "that is not an object"
 
-get :: Value -> Object -> Value
-get (String t) obj =
-  fromMaybe
-  (Error $ "key: " ++ T.unpack t ++ "not found")
-  (t `M.lookup` obj)
-get notstr _ = Error $ "value: " ++ show notstr ++ "in get is not a string"
+-- | val : the value from eval
+-- | f   : the filter that evaluated returns the key for the object val
 
-construct :: Value -> [(TFilter, TFilter)] -> Value
+-- 1. eval the filter with the current value
+-- if it is a single value:
+-- 2. if it's
+get :: Value -> TFilter -> EvalRes
+get val f =
+  either (Left . fv) (Right . map fv) (eval f val)
+  where
+    fv :: Value -> Value
+    fv vak = case vak of
+               A.String v -> getVal v
+               _ -> error "Can't use a non-string as key"
+    getVal :: T.Text -> Value
+    getVal v = case val of
+                 A.Object o -> (o M.! v)
+                 _ -> error $ "value: " ++ show val ++ "is not an object" 
+
+
+cartProd :: [a] -> [b] -> [(a, b)]
+cartProd xs ys = [ (x,y) | x <- xs, y <- ys ]
+
+-- |
+-- >> λ> weird_prod [([1,2],[3,4]), ([5,6], [7,8]), ([9], [10])]
+-- >> [[(1,3),(5,7),(9,10)],[(1,3),(5,8),(9,10)],[(1,3),(6,7),(9,10)],[(1,3),(6,8),(9,10)],[(1,4),(5,7),(9,10)],[(1,4),(5,8),(9,10)],[(1,4),(6,7),(9,10)],[(1,4),(6,8),(9,10)],[(2,3),(5,7),(9,10)],[(2,3),(5,8),(9,10)],[(2,3),(6,7),(9,10)],[(2,3),(6,8),(9,10)],[(2,4),(5,7),(9,10)],[(2,4),(5,8),(9,10)],[(2,4),(6,7),(9,10)],[(2,4),(6,8),(9,10)]]
+-- weirdProd :: Monad m => [(m a, m b)] -> m [(a, b)]
+weirdProd :: [([a], [b])] -> [[(a, b)]]
+weirdProd xs = mapM (uncurry cartProd) xs
+
+construct :: Value -> [(TFilter, TFilter)] -> EvalRes
 construct val fs =
   let kys = map (flip eval val . fst) fs
       vls = map (flip eval val . snd) fs
+      -- kys' and vls' hold lists instead of eithers. left is a singleton list
+      kys' = map (either return id) kys
+      vls' = map (either return id) vls
+      kvs = zip kys' vls'
   in
-    if all isString kys
-    then Object . M.fromList $ zip (map fromString kys) vls
-    else Error $ "Some filters in the keys returned other thing other than string: " ++ show kys
+    Right $ map (\l -> A.Object $ M.fromList $ map (first fromString) l) $ weirdProd kvs
 
-pipe :: Value -> TFilter -> TFilter -> Value
+pipe :: Value -> TFilter -> TFilter -> EvalRes
 pipe v f g =
-  eval f $ eval g v
+  case eval g v of
+    Left v' -> eval f v'
+    Right vs -> let vs' = map (eval f) vs
+                in Right $ concatMap (either pure id) vs'
+
+union :: Value -> TFilter -> TFilter -> EvalRes
+union val f g =
+  case (eval f val, eval g val) of
+    (Left v, Left w    ) -> Left $ union_obj v w
+    (Left v, Right ws  ) -> Right $ map (union_obj v) ws
+    (Right vs, Left w  ) -> Right $ map (flip union_obj w) vs
+    (Right vs, Right ws) -> Right $ concatMap (\v -> map (union_obj v) ws) vs
+  where
+    union_obj :: Value -> Value -> Value
+    union_obj obj1 obj2 = case (obj1,obj2) of
+                      (A.Object o1, A.Object o2) -> A.Object (o1 `M.union` o2)
+                      (_, A.Object _           ) -> error "Left hand side of union is not an Object"
+                      (A.Object _,_            ) -> error "Right hand side of union is not an Object"
 
 \end{code}
