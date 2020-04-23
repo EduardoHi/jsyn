@@ -170,6 +170,26 @@ intersect a b =
 
 intersect can also be thought as the greatest common ancestor in the subtyping tree.
 
+The type of a value naturally follows from it's structure:
+\begin{code}
+
+inferVT :: Value -> ValTy
+inferVT x =
+  case x of
+    A.Object o -> TObject $ M.map inferVT o
+    A.Array v  -> TArray $ case V.length v of
+                            0 -> TValue
+                            1 -> inferVT $ V.head v
+                            _ -> V.foldl1' intersect $ V.map inferVT v
+    A.String _ -> TString
+    A.Number _ -> TNumber
+    A.Bool _   -> TBool
+    A.Null     -> TNull
+
+
+\end{code}
+
+
 ** DSL 
 
 This DSL is inspired in jq.
@@ -225,12 +245,16 @@ since I'm not going to formalize it with math.
 
 eval :: Expr -> Value -> Value
 eval x val = case x of
+  -- partially evaluated
   Id           -> val
   Const v      -> v
+  -- partially evaluated
   Get f        -> get val f 
   Construct fs -> construct val fs
   Pipe f g     -> pipe val f g
+  -- partially evaluated
   Keys         -> keys val
+  -- partially evaluated
   Elements     -> elements val
   Union f g    -> union val f g
 
