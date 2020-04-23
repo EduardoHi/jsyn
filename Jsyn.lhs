@@ -95,8 +95,8 @@ fromString v = error $ "value is not a string" ++ show v
 
 ** Types
 
-A Type represents a subset of possible values, I visualize it as a way 
-of abstracting information, and thinking about sets instead of particular values.
+A Type represents a subset of possible values, it helps to think about them as
+abstracting information, and thinking about sets instead of particular values.
 
 An important thing to notice is that in this typing scheme we assume that
 the Arrays are homogenous and they contain the same type in every position,
@@ -109,15 +109,66 @@ by the name of the keys and the type of each value.
 \begin{code}
 
 data Ty
-  = TObject (M.HashMap String Ty)
-  | TArray Ty
-  | TString
-  | TNumber
-  | TBool
-  | TNull
-  deriving (Eq, Show, Read)
+  = TArrow Ty Ty  -- Ty -> Ty
+  | TVal ValTy
+  deriving (Eq, Show, Read, Ord)
+
+-- TODO: We can create a more sophisticated type system with TRecord and TList
+-- that are special cases of when the Object is not being used as a map, and when
+-- an array has the same type everywhere
+data ValTy
+  = TValue                           -- Supertype of the rest
+  | TObject (M.HashMap T.Text ValTy) -- {k1: ValTy1, k2 ValTy2, ...} 
+  | TArray ValTy                     -- intersection of: [ValTy1, ValTy2, ...]
+  | TString                          -- "a string"
+  | TNumber                          -- "23"
+  | TBool                            -- true
+  | TNull                            -- null
+  deriving (Eq, Show, Read, Ord)
 
 \end{code}
+
+The separation between Ty and ValTy is mainly to avoid Arrows inside objects and arrays.
+Ty represents all possible values in the DSL, and ValTy represents only the values
+that are valid JSON. Our final program must receive and return a ValTy, but intermediate
+steps might have Tys.
+
+** Subtyping
+
+The Subtyping relation is reflexive and transitive.
+It also provides the subsumption rule so that the rules can "forget information"
+
+** Type intersection
+
+Arrays pose an interesting question since json permits heterogeneous arrays.
+For example:
+What should be the type of ["abc", true, 2.3] ?
+What about [{age: 22, name: "Jim"}, {age: 21, name: "Pam", gpa: 4.2}] ?
+
+Also, since the program synthetizer receives a list of input/output examples,
+we want to infer what's the type over all inputs and outputs.
+
+Because of this and js code semantics we define the intersection of two objects
+as the keys they share and the intersection between their values. For arrays, is the intersection
+of their values. For the rest of possible value types, the intersection with themselves is
+reflexive and with the rest is the ValTy TValue.
+
+\begin{code}
+
+intersect :: ValTy -> ValTy -> ValTy
+intersect a b =
+  case (a,b) of
+    (TObject ta, TObject tb) -> TObject $ M.intersectionWith intersect ta tb
+    (TArray ta, TArray tb)   -> TArray $ ta `intersect` tb
+    (TString, TString)       -> TString
+    (TNumber, TNumber)       -> TNumber
+    (TBool, TBool)           -> TBool
+    (TNull, TNull)           -> TNull
+    _ -> TValue
+
+\end{code}
+
+intersect can also be thought as the greatest common ancestor in the subtyping tree.
 
 ** DSL 
 
