@@ -68,18 +68,6 @@ Typing Relation
 type Object = A.Object
 type Value = A.Value
 
-
-data Val
-  = JsonVal A.Value
--- our addition to make no-ops explicit,
--- in practice we should not construct invalid asts in our dsl
-  | Error String
-  deriving (Eq, Show)
-
-isError :: Val -> Bool
-isError (Error _) = True
-isError _ = False
-
 isString :: Value -> Bool
 isString (A.String _) = True
 isString _ = False
