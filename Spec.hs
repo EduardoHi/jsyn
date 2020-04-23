@@ -191,12 +191,16 @@ testCases =
       }
   ]
 
+fromEval :: EvalRes -> A.Value
+fromEval (Right v) = v
+fromEval (Left err) = error err
+
 testEval :: String -> Expr -> [(A.Value, A.Value)] -> SpecWith ()
 testEval name expr ios = 
   describe "eval" $ 
     forM_ (zip [1 ..] ios) $ \(n, (input, output)) ->
       it ("example #" <> show n <> " evaluates correctly") $
-        eval expr input `shouldBe` output
+      fromEval (eval expr input) `shouldBe` output
 
 testInferVal :: String -> [(ValTy, ValTy)] -> [(A.Value, A.Value)] -> SpecWith ()
 testInferVal name expected ios =

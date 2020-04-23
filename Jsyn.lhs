@@ -231,11 +231,13 @@ since I'm not going to formalize it with math.
 
 \begin{code}
 
-eval :: Expr -> Value -> Value
+type EvalRes = Either String Value
+
+eval :: Expr -> Value -> EvalRes
 eval x val = case x of
   -- partially evaluated
-  Id           -> val
-  Const v      -> v
+  Id           -> pure val
+  Const v      -> pure v
   -- partially evaluated
   Get f        -> get val f 
   Construct fs -> construct val fs
@@ -246,14 +248,17 @@ eval x val = case x of
   Elements     -> elements val
   Union f g    -> union val f g
 
-keys :: Value -> Value
+keys :: Value -> EvalRes
 keys (A.Object o) =
-  A.Array . V.fromList $ map A.String $ M.keys o
-keys val = error $ "called keys of value: " ++ show val ++ "that is not an object"
+  Right . A.Array . V.fromList $ map A.String $ M.keys o
+keys val =
+  Left $ "called keys of value: " ++ show val ++ "that is not an object"
 
-elements :: Value -> Value
-elements (A.Object o) = A.Array . V.fromList $ M.elems o
-elements val = error $ "called elems of value: " ++ show val ++ "that is not an object"
+elements :: Value -> EvalRes
+elements (A.Object o) =
+  Right . A.Array . V.fromList $ M.elems o
+elements val =
+  Left $ "called elems of value: " ++ show val ++ "that is not an object"
 
 -- | val : the value from eval
 -- | f   : the filter that evaluated returns the key for the object val
@@ -261,37 +266,49 @@ elements val = error $ "called elems of value: " ++ show val ++ "that is not an 
 -- 1. eval the filter with the current value
 -- if it is a single value:
 -- 2. if it's
-get :: Value -> Expr -> Value
+get :: Value -> Expr -> EvalRes
 get val f =
-  case eval f val of
-    A.String v -> getVal v
-    _ -> error "Can't use a non-string as key"
+  (eval f val) >>= lhs
   where
-    getVal :: T.Text -> Value
+    lhs :: Value -> EvalRes
+    lhs l =
+      case l of
+        A.String v -> getVal v
+        _ -> Left "Can't use a non-string as key"
+    getVal :: T.Text -> EvalRes
     getVal v = case val of
-                 A.Object o -> (o M.! v)
-                 _ -> error $ "value: " ++ show val ++ "is not an object" 
+                 A.Object o -> Right (o M.! v)
+                 _ -> Left $ "value: " ++ show val ++ "is not an object" 
 
 
-construct :: Value -> [(Expr, Expr)] -> Value
+construct :: Value -> [(Expr, Expr)] -> EvalRes
 construct val fs =
   let kys = map (flip eval val . fst) fs
       vls = map (flip eval val . snd) fs
   in
-    if all isString kys
-    then A.Object . M.fromList $ zip (map fromString kys) vls
-    else error $ " keys have a value that is not a string: " ++ (show $ head $ takeWhile isString kys)
+    construct' kys vls
+  where construct' ks vs =
+          case (partitionEithers ks, partitionEithers vs) of
+            (([],rks), ([],rvs)) -> build rks rvs
+            ((lks,_), (lvs,_)) -> Left $ (unlines lks) ++ "\n" ++ (unlines lvs)
+        build ks vs =
+          if all isString ks
+          then Right . A.Object . M.fromList $ zip (map fromString ks) vs
+          else Left $ " keys have a value that is not a string: " ++ (show $ head $ takeWhile isString ks)
 
-pipe :: Value -> Expr -> Expr -> Value
+pipe :: Value -> Expr -> Expr -> EvalRes
 pipe v f g =
-  eval f $ eval g v
+  eval f =<< eval g v
 
-union :: Value -> Expr -> Expr -> Value
-union val f g =
-  case (eval f val, eval g val) of
-    (A.Object o1, A.Object o2) -> A.Object (o1 `M.union` o2)
-    (_, A.Object _           ) -> error "Left hand side of union is not an Object"
-    (A.Object _,_            ) -> error "Right hand side of union is not an Object"
+union :: Value -> Expr -> Expr -> EvalRes
+union val f g = do
+  l <- eval f val
+  r <- eval g val
+  case (l,r) of
+    (A.Object o1, A.Object o2) -> Right $ A.Object (o1 `M.union` o2)
+    (_, A.Object _)            -> Left "Left hand side of union is not an Object"
+    (A.Object _,_)             -> Left "Right hand side of union is not an Object"
+    (_,_)                      -> Left "union is not with objects"
 
 \end{code}
 
