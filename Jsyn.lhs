@@ -189,25 +189,25 @@ In the implementation, filters are a datatype, so that it can be manipulated
 as data and also be executed with it's corresponding haskell functions.
 \begin{code}
 
-data TFilter
+data Expr
   = Const Value
   -- /1 arity functions
   | Id
   | Keys
   | Elements
   -- /2 arity functions
-  | Get TFilter
-  | Construct [(TFilter, TFilter)]
+  | Get Expr
+  | Construct [(Expr, Expr)]
   -- /3 arity functions
-  | Union TFilter TFilter
-  | Pipe TFilter TFilter
+  | Union Expr Expr
+  | Pipe Expr Expr
   deriving (Show)
 
-fromConstString :: TFilter -> T.Text
+fromConstString :: Expr -> T.Text
 fromConstString (Const (A.String s)) = s
 fromConstString _ = error "not a Const String"
 
-isConstString :: TFilter -> Bool
+isConstString :: Expr -> Bool
 isConstString (Const (A.String _)) = True
 isConstString _ = False
 
@@ -223,7 +223,7 @@ since I'm not going to formalize it with math.
 
 \begin{code}
 
-eval :: TFilter -> Value -> Value
+eval :: Expr -> Value -> Value
 eval x val = case x of
   Id           -> val
   Const v      -> v
@@ -249,7 +249,7 @@ elements val = error $ "called elems of value: " ++ show val ++ "that is not an 
 -- 1. eval the filter with the current value
 -- if it is a single value:
 -- 2. if it's
-get :: Value -> TFilter -> Value
+get :: Value -> Expr -> Value
 get val f =
   case eval f val of
     A.String v -> getVal v
@@ -261,7 +261,7 @@ get val f =
                  _ -> error $ "value: " ++ show val ++ "is not an object" 
 
 
-construct :: Value -> [(TFilter, TFilter)] -> Value
+construct :: Value -> [(Expr, Expr)] -> Value
 construct val fs =
   let kys = map (flip eval val . fst) fs
       vls = map (flip eval val . snd) fs
@@ -270,11 +270,11 @@ construct val fs =
     then A.Object . M.fromList $ zip (map fromString kys) vls
     else error $ " keys have a value that is not a string: " ++ (show $ head $ takeWhile isString kys)
 
-pipe :: Value -> TFilter -> TFilter -> Value
+pipe :: Value -> Expr -> Expr -> Value
 pipe v f g =
   eval f $ eval g v
 
-union :: Value -> TFilter -> TFilter -> Value
+union :: Value -> Expr -> Expr -> Value
 union val f g =
   case (eval f val, eval g val) of
     (A.Object o1, A.Object o2) -> A.Object (o1 `M.union` o2)
@@ -292,7 +292,7 @@ function program(obj) {
 
 \begin{code}
 
-newtype Program = Program { programBody :: TFilter }
+newtype Program = Program { programBody :: Expr }
 
 toJS :: Program -> T.Text
 toJS Program{programBody = body} = T.unlines
@@ -302,15 +302,15 @@ toJS Program{programBody = body} = T.unlines
                                    ]
 \end{code}
 
-toJSInline converts TFilters to Javascript code
+toJSInline converts Exprs to Javascript code
 
-Since the TFilters have an implicit arg, when we print we need to "thread"
+Since the Exprs have an implicit arg, when we print we need to "thread"
 that arg down the tree, and up in the assignments. in the case of the
 inlined, the argument is always the same.
 
 \begin{code}
 
-toJSInline :: T.Text -> TFilter -> T.Text
+toJSInline :: T.Text -> Expr -> T.Text
 toJSInline s x =
   case x of
     (Const v) -> E.decodeUtf8 . C.toStrict $ A.encode v

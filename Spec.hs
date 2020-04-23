@@ -28,7 +28,7 @@ readInputOutputPairs filename = do
 -- | cstring little helper to build Constant Strings in the DSL
 cstring = Const . A.String
 
-filter_ex1 :: TFilter
+filter_ex1 :: Expr
 filter_ex1 = Construct
           [ (sf, Get sf)
           , (sd, Get sd)
@@ -36,10 +36,10 @@ filter_ex1 = Construct
   where sf = cstring "foo"
         sd = cstring "data"
 
-filter1 :: TFilter
+filter1 :: Expr
 filter1 = Id
 
-filter2 :: TFilter
+filter2 :: Expr
 filter2 = Construct
           [ (Get sc, sc)
           , (Get ss, ss)
@@ -47,7 +47,7 @@ filter2 = Construct
   where sc = cstring "Chicago"
         ss = cstring "Seattle"
 
-filter3 :: TFilter
+filter3 :: Expr
 filter3 = Construct
           [ (Get $ cstring "key",
               Construct
@@ -58,23 +58,23 @@ filter3 = Construct
           ]
 
 -- equivalent to this jq filter: {key: (keys | .[]) } + .[]
-filter4 :: TFilter
+filter4 :: Expr
 filter4 = Union
           (Construct [(cstring "key", Keys)])
           Elements
 
-filter5 :: TFilter
+filter5 :: Expr
 filter5 = Get $ cstring "age"
 
 -- TODO: This would fail with objects that share a key but have different fields
 -- a more succint way is for the DSL to have a Del operation
-filter6 :: TFilter
+filter6 :: Expr
 filter6 = Construct
           [ (cstring "age", Get $ cstring "age")
           , (cstring "gpa", Get $ cstring "gpa")
           ]
 
-testCases :: [(String, TFilter, IO [(A.Value, A.Value)])]
+testCases :: [(String, Expr, IO [(A.Value, A.Value)])]
 testCases =
   [ ("identity filter",
      filter1,
@@ -103,7 +103,7 @@ testCases =
     
   ]
 
-testFilter :: String -> TFilter -> [(A.Value, A.Value)] -> SpecWith ()
+testFilter :: String -> Expr -> [(A.Value, A.Value)] -> SpecWith ()
 testFilter name filter ios = do
   describe ("filter: " <> name) $ do
     forM_  (zip [1..] ios) $ \(n, (input, output)) ->
