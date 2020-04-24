@@ -21,6 +21,13 @@ readInputOutputPairs filename = do
     Left s -> fail $ "Error decoding json: " <> s
     Right v -> pure $ map (\v -> (input v, output v)) v
 
+readJsonExamples :: String -> IO [JsonExample]
+readJsonExamples filename = do
+  content <- C.readFile filename
+  case decodeJsonExamples content of
+    Left s -> fail $ "Error decoding json: " <> s
+    Right v -> return v
+
 -- | cstring little helper to build Constant Strings in the DSL
 cstring = Const . A.String
 

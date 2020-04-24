@@ -14,9 +14,11 @@ import           Data.Bifunctor (first)
 import qualified Data.ByteString.Lazy.Char8 as C
 import           Data.Either
 import qualified Data.HashMap.Strict as M
+import Data.List (find)
 import           Data.Maybe
 import           Data.Scientific
 import           Data.Semigroup
+import           Data.List (sort, nubBy, nub)
 import qualified Data.Text as T
 import           Data.Text.Encoding as E
 import qualified Data.Vector as V
@@ -72,8 +74,7 @@ isString :: Value -> Bool
 isString (A.String _) = True
 isString _ = False
 
--- TODO: Boolean blindness in isError, isString, Functions :(
--- it would be better to push that to the type level but idk how
+-- TODO: Boolean blindness in isString it would be better to push that to the type level but idk how
 
 fromString :: Value -> T.Text
 fromString (A.String s) = s
@@ -195,6 +196,24 @@ this is in part inspired by the robustness principle:
 
 In the implementation, filters are a datatype, so that it can be manipulated
 as data and also be executed with it's corresponding haskell functions.
+
+The functions (get, id, ...) etc have a different shape
+than the natural DSL of the form "id(e), get(e,e), etc" this
+is because all the expressions have an "implicit argument" that
+defaults to the current value being evaluated. This limits
+the number of possible programs but simplifies search.
+The pipe operator makes it possible to still write interesting
+programs that could need variables, for example:
+
+input = { "nested_obj":{"a":10} }
+
+suppose we had that input, and we think we need to write
+x = get input "nested_obj"
+return get x "a"
+
+but we can just have
+Pipe (Get "nested_obj") (Get "a")
+
 \begin{code}
 
 data Expr
@@ -209,7 +228,7 @@ data Expr
   -- /3 arity functions
   | Union Expr Expr
   | Pipe Expr Expr
-  deriving (Show)
+  deriving (Show, Eq)
 
 fromConstString :: Expr -> T.Text
 fromConstString (Const (A.String s)) = s
@@ -218,6 +237,16 @@ fromConstString _ = error "not a Const String"
 isConstString :: Expr -> Bool
 isConstString (Const (A.String _)) = True
 isConstString _ = False
+
+instance Ord Expr where
+  (Const _) <= Id = True
+  Id <= Keys = True
+  Keys <= Elements = True
+  Elements <= (Get _) = True
+  (Get _) <= (Construct _) = True
+  (Construct _) <= (Union _ _) = True
+  (Union _ _ ) <=  (Pipe _ _) = True
+  _ <= _ = False
 
 \end{code}
 
@@ -228,6 +257,7 @@ this can be seen as the "Haskell" interpretation of the DSL
 to be used during the search to find the correct programs.
 This can also be seen as the spec of the semantics of the DSL,
 since I'm not going to formalize it with math.
+
 
 \begin{code}
 
@@ -267,17 +297,17 @@ elements val =
 -- if it is a single value:
 -- 2. if it's
 get :: Value -> Expr -> EvalRes
-get val f =
-  (eval f val) >>= lhs
+get val f = 
+  eval f val >>= get'
   where
-    lhs :: Value -> EvalRes
-    lhs l =
-      case l of
-        A.String v -> getVal v
+    get' :: Value -> EvalRes
+    get' valKey =
+      case valKey of
+        A.String k -> getVal k
         _ -> Left "Can't use a non-string as key"
     getVal :: T.Text -> EvalRes
     getVal v = case val of
-                 A.Object o -> Right (o M.! v)
+                 A.Object o -> maybe (Left "key not found") Right (v `M.lookup` o)
                  _ -> Left $ "value: " ++ show val ++ "is not an object" 
 
 
@@ -290,11 +320,11 @@ construct val fs =
   where construct' ks vs =
           case (partitionEithers ks, partitionEithers vs) of
             (([],rks), ([],rvs)) -> build rks rvs
-            ((lks,_), (lvs,_)) -> Left $ (unlines lks) ++ "\n" ++ (unlines lvs)
+            ((lks,_), (lvs,_)) -> Left $ unlines lks ++ "\n" ++ unlines lvs
         build ks vs =
           if all isString ks
           then Right . A.Object . M.fromList $ zip (map fromString ks) vs
-          else Left $ " keys have a value that is not a string: " ++ (show $ head $ takeWhile isString ks)
+          else Left $ " keys have a value that is not a string: " ++ show (head $ takeWhile isString ks)
 
 pipe :: Value -> Expr -> Expr -> EvalRes
 pipe v f g =
@@ -347,7 +377,7 @@ toJSInline s x =
     Keys -> "Object.keys(" <> s <> ")"
     Elements -> "Object.values(" <> s <> ")"
 
-    (Get f) -> if isConstString f && (isValidAsKey $ fromConstString f)
+    (Get f) -> if isConstString f && isValidAsKey (fromConstString f)
                then s <> "." <> fromConstString f
                else s <> "[" <> f' <> "]"
       where f' = toJSInline s f
@@ -356,7 +386,7 @@ toJSInline s x =
       where inlinePairs = T.intercalate ", " $ map go fs
             go (k,v) = treatKey k <> ":" <> toJSInline s v
             treatKey kstr =
-              if isConstString kstr && (isValidAsKey $ fromConstString kstr)
+              if isConstString kstr && isValidAsKey (fromConstString kstr)
               then toJSInline s kstr
               else "[" <> toJSInline s kstr <> "]"
     (Union f g) -> "Object.assign(" <> f' <> ", " <> g' <> ")"
@@ -370,3 +400,94 @@ toJSInline s x =
 isValidAsKey st = not $ T.any (\x -> x == ' ' || x == '"') st
 
 \end{code}
+
+Enumerative Search Algorithm.
+
+1. start with set of terminals
+   ps is the set of possible programs
+
+2. Increase the possible trees
+ps = grow ps 
+grow :: Set Expr -> Set Expr
+grows plist 
+returns the list of all trees generated by
+taking a non-terminal and adding nodes from plist as children
+
+3. if any p in ps is consistent with the examples, return p else repeat
+  consistent means every input is correctly mapped to it's output
+
+we do this with a bounded size to avoid infinite trees
+
+\begin{code}
+
+-- For now, the only initial constants are the values in
+-- the keys of the object
+-- TODO: when extending the domain, extend this to extract more values
+extractConst :: Value -> [Expr]
+extractConst x =
+  case x of
+    (A.Object o) -> map (Const . A.String) $ M.keys o
+    _ -> []
+
+
+objWidth :: Value -> Int
+objWidth (A.Object o) = max (M.size o) $ maximum $ map objWidth $ M.elems o
+objWidth _ = 0
+
+botupSearch :: Int -> [JsonExample] -> Maybe Expr
+botupSearch bound examples =
+  let ps = nub $ concatMap (extractConst . input) examples
+      -- 1 arity functions are terminals too
+      ps' = ps ++ [Id, Keys, Elements]
+      width = maximum $ map (objWidth . output) examples
+  in searchStep bound width ps' examples
+  
+searchStep :: Int -> Int -> [Expr] -> [JsonExample] -> Maybe Expr
+searchStep 0 width _ _ = Nothing
+searchStep bound width ps examples =
+  let ps' = grow width ps
+  in
+    case find (consistent examples) ps' of
+      Nothing -> searchStep (bound-1) width (ps ++ ps') examples
+      Just consistentProgram -> Just consistentProgram
+
+cartProd :: [a] -> [b] -> [(a, b)]
+cartProd xs ys = [ (x,y) | x <- xs, y <- ys ]
+
+grow :: Int -> [Expr] -> [Expr]
+grow width nodes = 
+-- n +  n^2 C width  + n^2 + n^2
+  growGet ++ growConstruct ++ growUnion ++ growPipe
+  where
+    growGet = map Get nodes
+-- n^2 in size
+    combs = cartProd nodes nodes
+-- all possible combinations up to width
+-- of the pairs of elements
+-- this is extremely slow but exhaustive
+    growConstruct = map Construct $ combinations width combs
+    growUnion     = map (\(x,y) -> Union x y) combs
+    growPipe      = map (\(x,y) -> Pipe x y) combs
+
+-- All unique combinations of size n
+-- λ> combinations 2 [1,2,3]
+-- [[1,2],[1,3]]
+combinations n xs =
+  nubBy (\x y -> sort x == sort y) $
+  do
+  -- this line would make it up to size n
+  -- n <- [1..(min n $ length xs)]
+  filter ((n==) . length . nub) $ mapM (const xs) [1..n]
+  
+
+
+consistent :: [JsonExample] -> Expr -> Bool
+consistent examples expr =
+  all go examples
+  where go JsonExample{input=i,output=o} =
+          case eval expr i of
+            Left s -> False -- Left is an error during evaluation
+            Right r -> r == o
+
+\end{code}
+
