@@ -4,11 +4,11 @@
 module Jsyn where
 
 import qualified Data.Aeson as A
-import Data.Bifunctor (first)
+import Data.Bifunctor (bimap, first, second)
 import qualified Data.ByteString.Lazy.Char8 as C
 import Data.Either
 import qualified Data.HashMap.Strict as M
-import Data.List (nub, nubBy, sort, find)
+import Data.List (find, nub, nubBy, sort, partition)
 import Data.Maybe
 import Data.Scientific
 import Data.Semigroup
@@ -454,8 +454,131 @@ consistent examples expr =
         Left s -> False -- Left is an error during evaluation
         Right r -> r == o
 
+-- Enumeration of types for now
+data ExprT
+  = TGet
+  | TConstruct
+  deriving (Show, Read, Eq, Ord)
+
 -- forward is a single step only with types
---   it answers the following question:
+-- it answers the following question:
 -- given a type and an Expression, what is the type of the resulting Value?
 
--- forward ::
+-- | t = TObject (fromList [("age",TNumber),("name",TString)])
+-- >> forward t (Get "")
+-- >> [(Get (Const (String "age")),TNumber),(Get (Const (String "name")),TString)]
+forward :: ValTy -> ExprT -> [(Expr, ValTy)]
+forward t e =
+  case e of
+    TGet ->
+      case t of
+        TObject o -> map (first $ Get . Const . A.String) $ M.toList o
+        _ -> []
+    -- TKeys ->
+    --   case t of
+    --     TObject o -> [(Keys, TArray TString)]
+    --     _ -> []
+    -- TElements ->
+    --   case t of
+    --     TObject o -> [(Elements, TArray $ inferArr $ V.fromList $ M.elems o)]
+    --     _ -> []
+    _ -> []
+
+-- TODO: make forward a total function
+
+type THole = (String, ValTy)
+
+-- | from a type get expressions with holes that can give current type
+-- >>
+-- [("e1",TNumber),("e2",TNumber)]
+backward :: ValTy -> ExprT -> [THole]
+backward t e =
+  case e of
+    TConstruct ->
+      case t of
+        TObject o -> zip idents $ M.elems o
+        _ -> []
+  where
+    idents = map (("e" ++) . show) [1 ..]
+
+unify :: ValTy -> ValTy -> [Expr]
+unify = undefined
+
+-- Inductive Generation Search without deduction
+--
+--
+
+-- hypothesis expression
+data HExpr
+  = HGet T.Text
+  | HConstruct [(T.Text, HExpr)]
+  | Hole ValTy
+  deriving (Show, Eq, Ord)
+
+hExprToExpr :: HExpr -> Expr
+hExprToExpr h =
+  case h of
+    (HGet t) -> Get . Const . A.String $ t
+    (HConstruct exps) ->
+      Construct $ map (bimap (Const . A.String) hExprToExpr) exps
+    (Hole _) -> error "can't convert an open hypothesis to an expression"
+
+isClosed :: HExpr -> Bool
+isClosed (HGet _) = True
+isClosed (HConstruct exps) = all isClosed $ map snd exps
+isClosed (Hole h) = False
+
+indGenSearch :: [JsonExample] -> Maybe Program
+indGenSearch examples =
+  -- search a program of the form:
+  -- \x . e
+  -- x : t1, e : t2
+  step hypotheses
+  where
+    (t1, t2) = inferVTexamples examples
+    hypotheses = inductiveGen (t1, t2)
+    step :: [HExpr] -> Maybe Program
+    step hs =
+          let (closedhs , openhs) = partition isClosed hs
+          in case find (consistent examples . hExprToExpr) closedhs of
+               Just consistentH -> Just . Program . hExprToExpr $ consistentH
+               Nothing -> case openhs of
+                            [] -> Nothing
+                            hs' -> let programs = mapM (step . stepH t1) openhs
+                                   in head <$> programs
+
+
+-- given an open hypothesis, return all the hypotheses it generates
+stepH :: ValTy -> HExpr -> [HExpr]
+stepH t1 h =
+  case h of
+    HConstruct exps ->
+      let kys = map fst exps
+          -- square on the number of generated hypotheses
+          allCombinations = mapM ((\(Hole t) -> inductiveGen (t1,t)) . snd) exps
+      in map (HConstruct . zip kys) allCombinations
+
+-- TODO: Replace pair of ValTy with TArr when generalizing to multiple args ?
+-- | from an arrow type, return a stream of hypothesis compatible with those types
+inductiveGen :: (ValTy, ValTy) -> [HExpr]
+inductiveGen (t1, t2) =
+  getHs ++ constructHs
+  where
+    constructHs =
+      case t2 of
+        TObject o ->
+          [HConstruct $ map (second Hole) $ M.toList o]
+        _ -> []
+    getHs =
+      case t1 of
+        TObject o ->
+          -- from all the fields of t1 filter the ones that are equal to t2
+          -- and return their gets
+          map (HGet . fst) $ filter ((t2 ==) . snd) $ M.toList o
+        _ -> []
+
+inferVTexamples :: [JsonExample] -> (ValTy, ValTy)
+inferVTexamples examples =
+  let t1 = inferArr . V.fromList $ map (inferVT . input) examples
+      t2 = inferArr . V.fromList $ map (inferVT . output) examples
+   in (t1, t2)
