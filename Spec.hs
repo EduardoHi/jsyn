@@ -21,13 +21,6 @@ readInputOutputPairs filename = do
     Left s -> fail $ "Error decoding json: " <> s
     Right v -> pure $ map (\v -> (input v, output v)) v
 
-readJsonExamples :: String -> IO [JsonExample]
-readJsonExamples filename = do
-  content <- C.readFile filename
-  case decodeJsonExamples content of
-    Left s -> fail $ "Error decoding json: " <> s
-    Right v -> return v
-
 -- | cstring little helper to build Constant Strings in the DSL
 cstring = Const . A.String
 
@@ -83,6 +76,10 @@ filter6 =
     [ (cstring "age", Get $ cstring "age"),
       (cstring "gpa", Get $ cstring "gpa")
     ]
+
+filter7 :: Expr
+filter7 =
+  Pipe (Get (cstring "hostinfo")) (Get (cstring "host"))
 
 types1 :: [(ValTy, ValTy)]
 types1 =
@@ -150,6 +147,20 @@ types6 =
     )
   ]
 
+types7 =
+  [ ( TObject
+        ( M.fromList
+            [ ( "hostinfo",
+                TObject
+                  (M.fromList [("online", TBool), ("name", TString), ("host", TString)])
+              ),
+              ("id", TNumber)
+            ]
+        ),
+      TString
+    )
+  ]
+
 data TestTask = TestTask
   { taskName :: String,
     taskExpr :: Expr,
@@ -195,6 +206,12 @@ testCases =
         taskExpr = filter6,
         taskIO = readInputOutputPairs "tests/test6.json",
         expectedTypes = types6
+      },
+    TestTask
+      { taskName = "get a value in a nested object",
+        taskExpr = filter7,
+        taskIO = readInputOutputPairs "tests/test7.json",
+        expectedTypes = types7
       }
   ]
 
@@ -227,8 +244,8 @@ main = hspec $ do
   let exprs = map taskExpr testCases
   let expected_types = map expectedTypes testCases
 
-  forM_ testCases $ \(TestTask name expr readios expected_types) -> do
+  forM_ (zip [1..] testCases) $ \(i, TestTask name expr readios expected_types) -> do
     ios <- runIO readios
-    describe ("task: " <> name) $ do
+    describe ("task " <> show i <> ": " <> name) $ do
       testEval name expr ios
       testInferVal name expected_types ios

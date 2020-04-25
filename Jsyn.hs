@@ -3,12 +3,13 @@
 
 module Jsyn where
 
+import Control.Monad
 import qualified Data.Aeson as A
 import Data.Bifunctor (bimap, first, second)
 import qualified Data.ByteString.Lazy.Char8 as C
 import Data.Either
 import qualified Data.HashMap.Strict as M
-import Data.List (find, nub, nubBy, sort, partition)
+import Data.List (find, nub, nubBy, partition, sort)
 import Data.Maybe
 import Data.Scientific
 import Data.Semigroup
@@ -38,6 +39,13 @@ instance A.FromJSON JsonExample
 decodeJsonExamples :: C.ByteString -> Either String [JsonExample]
 decodeJsonExamples content =
   A.eitherDecode content :: Either String [JsonExample]
+
+readJsonExamples :: String -> IO [JsonExample]
+readJsonExamples filename = do
+  content <- C.readFile filename
+  case decodeJsonExamples content of
+    Left s -> fail $ "Error decoding json: " <> s
+    Right v -> return v
 
 -- From what I've learned following
 -- Programming Languages Foundations: https://softwarefoundations.cis.upenn.edu/
@@ -279,8 +287,10 @@ get val f =
     getVal :: T.Text -> EvalRes
     getVal v = case val of
       A.Object o ->
-        maybe (Left . T.unpack $ "key: \"" <> v <> "\" not found in object: " <> T.pack (show o))
-              Right (v `M.lookup` o)
+        maybe
+          (Left . T.unpack $ "key: \"" <> v <> "\" not found in object: " <> T.pack (show o))
+          Right
+          (v `M.lookup` o)
       _ -> Left $ "value: " ++ show val ++ "is not an object"
 
 construct :: Value -> [(Expr, Expr)] -> EvalRes
@@ -512,6 +522,7 @@ unify = undefined
 data HExpr
   = HGet T.Text
   | HConstruct [(T.Text, HExpr)]
+  | HPipe HExpr HExpr
   | Hole ValTy
   deriving (Show, Eq, Ord)
 
@@ -521,11 +532,14 @@ hExprToExpr h =
     (HGet t) -> Get . Const . A.String $ t
     (HConstruct exps) ->
       Construct $ map (bimap (Const . A.String) hExprToExpr) exps
+    (HPipe exp1 exp2) ->
+      Pipe (hExprToExpr exp1) (hExprToExpr exp2)
     (Hole _) -> error "can't convert an open hypothesis to an expression"
 
 isClosed :: HExpr -> Bool
 isClosed (HGet _) = True
 isClosed (HConstruct exps) = all isClosed $ map snd exps
+isClosed (HPipe exp1 exp2) = isClosed exp1 && isClosed exp2
 isClosed (Hole h) = False
 
 indGenSearch :: [JsonExample] -> Maybe Program
@@ -533,42 +547,69 @@ indGenSearch examples =
   -- search a program of the form:
   -- \x . e
   -- x : t1, e : t2
-  step hypotheses
+  msum $ step t1 examples hypotheses
   where
     (t1, t2) = inferVTexamples examples
     hypotheses = inductiveGen (t1, t2)
-    step :: [HExpr] -> Maybe Program
-    step hs =
-          let (closedhs , openhs) = partition isClosed hs
-          in case find (consistent examples . hExprToExpr) closedhs of
-               Just consistentH -> Just . Program . hExprToExpr $ consistentH
-               Nothing -> case openhs of
-                            [] -> Nothing
-                            hs' -> let programs = mapM (step . stepH t1) openhs
-                                   in head <$> programs
 
+step :: ValTy -> [JsonExample] -> [HExpr] -> [Maybe Program]
+step t1 examples hs =
+-- split closed and open hypotheses
+-- for every closed hypothesis, check if any is consistent, if it is return that one
+-- else, for each open hypotheses generate more closed/open hypotheses
+-- and recursively search them
+  let (closedhs, openhs) = partition isClosed hs
+  in
+    case find (consistent examples . hExprToExpr) closedhs of
+      Just hConsistent -> [Just . Program . hExprToExpr $ hConsistent]
+      Nothing -> case openhs of
+                   [] -> [Nothing]
+                   hs' -> programs
+                     where
+                       expandedHypotheses :: [HExpr]
+                       expandedHypotheses = concatMap (expand t1) openhs
+                       programs :: [Maybe Program]
+                       programs = step t1 examples expandedHypotheses
 
 -- given an open hypothesis, return all the hypotheses it generates
-stepH :: ValTy -> HExpr -> [HExpr]
-stepH t1 h =
+expand :: ValTy -> HExpr -> [HExpr]
+expand t1 h =
   case h of
     HConstruct exps ->
       let kys = map fst exps
-          -- square on the number of generated hypotheses
-          allCombinations = mapM ((\(Hole t) -> inductiveGen (t1,t)) . snd) exps
-      in map (HConstruct . zip kys) allCombinations
+          -- quadratic on the number of generated hypotheses by inductiveGen (t1, t)
+          allCombinations = mapM ((\(Hole t) -> inductiveGen (t1, t)) . snd) exps
+       in map (HConstruct . zip kys) allCombinations
+    HPipe (Hole th1) (Hole t2) ->
+      do
+        exp1 <- inductiveGen (t1, th1)
+        exp2 <- inductiveGen (th1, t2)
+        return $ HPipe exp1 exp2
+    HPipe e1 e2 -> []
+    h -> error $ show h
+
+-- [
+--   HPipe (Hole TNumber) (Hole TString),
+--   HPipe (Hole TBool) (Hole TString),
+--   HPipe (Hole TString) (Hole TString),
+--   HPipe (Hole (TObject (fromList [("online",TBool),("name",TString),("host",TString)])))
+--         (Hole TString)
+-- ]
 
 -- TODO: Replace pair of ValTy with TArr when generalizing to multiple args ?
+
 -- | from an arrow type, return a stream of hypothesis compatible with those types
 inductiveGen :: (ValTy, ValTy) -> [HExpr]
 inductiveGen (t1, t2) =
-  getHs ++ constructHs
+  getHs ++ constructHs ++ pipeHs
   where
+    -- construct hypotheses
     constructHs =
       case t2 of
         TObject o ->
           [HConstruct $ map (second Hole) $ M.toList o]
         _ -> []
+    -- get hypotheses, note how this generates hypotheses without holes
     getHs =
       case t1 of
         TObject o ->
@@ -576,6 +617,17 @@ inductiveGen (t1, t2) =
           -- and return their gets
           map (HGet . fst) $ filter ((t2 ==) . snd) $ M.toList o
         _ -> []
+    pipeHs =
+      let types =
+            [TNumber, TBool, TString]
+              ++ ( case t1 of
+                     TObject o -> M.elems o
+                     TArray a -> [a]
+                     _ -> []
+                 )
+          holes = map Hole $ nub types
+       in -- quadratic in number of holes
+          HPipe <$> holes <*> [Hole t2]
 
 inferVTexamples :: [JsonExample] -> (ValTy, ValTy)
 inferVTexamples examples =
