@@ -47,6 +47,12 @@ readJsonExamples filename = do
     Left s -> fail $ "Error decoding json: " <> s
     Right v -> return v
 
+inferVTexamples :: [JsonExample] -> (ValTy, ValTy)
+inferVTexamples examples =
+  let t1 = inferArr . V.fromList $ map (inferVT . input) examples
+      t2 = inferArr . V.fromList $ map (inferVT . output) examples
+   in (t1, t2)
+
 -- From what I've learned following
 -- Programming Languages Foundations: https://softwarefoundations.cis.upenn.edu/
 -- A definition of a language should have:
@@ -629,8 +635,3 @@ inductiveGen (t1, t2) =
        in -- quadratic in number of holes
           HPipe <$> holes <*> [Hole t2]
 
-inferVTexamples :: [JsonExample] -> (ValTy, ValTy)
-inferVTexamples examples =
-  let t1 = inferArr . V.fromList $ map (inferVT . input) examples
-      t2 = inferArr . V.fromList $ map (inferVT . output) examples
-   in (t1, t2)
