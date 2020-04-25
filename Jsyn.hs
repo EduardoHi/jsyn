@@ -86,7 +86,7 @@ fromString v = error $ "value is not a string" ++ show v
 data Ty
   = TArrow Ty Ty -- Ty -> Ty
   | TVal ValTy
-  deriving (Eq, Show, Read, Ord)
+  deriving (Eq, Show, Ord)
 
 -- TODO: We can create a more sophisticated type system with TRecord and TList
 -- that are special cases of when the Object is not being used as a map, and when
@@ -99,7 +99,7 @@ data ValTy
   | TNumber -- "23"
   | TBool -- true
   | TNull -- null
-  deriving (Eq, Show, Read, Ord)
+  deriving (Eq, Show, Ord)
 
 -- The separation between Ty and ValTy is mainly to avoid Arrows inside objects and arrays.
 -- Ty represents all possible values in the DSL, and ValTy represents only the values
@@ -141,14 +141,17 @@ intersect a b =
 
 -- The type of a value naturally follows from it's structure:
 
+inferArr :: V.Vector ValTy -> ValTy
+inferArr v = case V.length v of
+  0 -> TValue
+  1 -> V.head v
+  _ -> V.foldl1' intersect v
+
 inferVT :: Value -> ValTy
 inferVT x =
   case x of
     A.Object o -> TObject $ M.map inferVT o
-    A.Array v -> TArray $ case V.length v of
-      0 -> TValue
-      1 -> inferVT $ V.head v
-      _ -> V.foldl1' intersect $ V.map inferVT v
+    A.Array v -> TArray $ inferArr $ V.map inferVT v
     A.String _ -> TString
     A.Number _ -> TNumber
     A.Bool _ -> TBool
@@ -275,7 +278,9 @@ get val f =
         _ -> Left "Can't use a non-string as key"
     getVal :: T.Text -> EvalRes
     getVal v = case val of
-      A.Object o -> maybe (Left "key not found") Right (v `M.lookup` o)
+      A.Object o ->
+        maybe (Left . T.unpack $ "key: \"" <> v <> "\" not found in object: " <> T.pack (show o))
+              Right (v `M.lookup` o)
       _ -> Left $ "value: " ++ show val ++ "is not an object"
 
 construct :: Value -> [(Expr, Expr)] -> EvalRes
@@ -315,6 +320,7 @@ union val f g = do
 -- ```
 
 newtype Program = Program {programBody :: Expr}
+  deriving (Show, Eq)
 
 toJS :: Program -> T.Text
 toJS Program {programBody = body} =
@@ -432,10 +438,12 @@ grow width nodes =
 -- > combinations 2 [1,2,3]
 -- [[1,2],[1,3]]
 combinations n xs =
-  nubBy (\x y -> sort x == sort y) $
-      -- this line would make it up to size n
-      -- n <- [1..(min n $ length xs)]
-      filter ((n ==) . length . nub) $ mapM (const xs) [1 .. n]
+  nubBy (\x y -> sort x == sort y)
+    $
+    -- this line would make it up to size n
+    -- n <- [1..(min n $ length xs)]
+    filter ((n ==) . length . nub)
+    $ mapM (const xs) [1 .. n]
 
 consistent :: [JsonExample] -> Expr -> Bool
 consistent examples expr =

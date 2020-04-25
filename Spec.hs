@@ -203,15 +203,16 @@ fromEval (Right v) = v
 fromEval (Left err) = error err
 
 testEval :: String -> Expr -> [(A.Value, A.Value)] -> SpecWith ()
-testEval name expr ios = 
-  describe "eval" $ 
-    forM_ (zip [1 ..] ios) $ \(n, (input, output)) ->
+testEval name expr ios =
+  describe "eval"
+    $ forM_ (zip [1 ..] ios)
+    $ \(n, (input, output)) ->
       it ("example #" <> show n <> " evaluates correctly") $
-      fromEval (eval expr input) `shouldBe` output
+        fromEval (eval expr input) `shouldBe` output
 
 testInferVal :: String -> [(ValTy, ValTy)] -> [(A.Value, A.Value)] -> SpecWith ()
 testInferVal name expected ios =
-  describe "inference" $ 
+  describe "inference" $
     forM_ (zip3 [1 ..] expected ios) go
   where
     go (n, (expected_i, expected_o), (input, output)) =
@@ -225,7 +226,7 @@ main :: IO ()
 main = hspec $ do
   let exprs = map taskExpr testCases
   let expected_types = map expectedTypes testCases
-  
+
   forM_ testCases $ \(TestTask name expr readios expected_types) -> do
     ios <- runIO readios
     describe ("task: " <> name) $ do
