@@ -295,7 +295,7 @@ construct val fs =
 
 pipe :: Value -> Expr -> Expr -> EvalRes
 pipe v f g =
-  eval f =<< eval g v
+  eval f v >>= eval g
 
 union :: Value -> Expr -> Expr -> EvalRes
 union val f g = do
