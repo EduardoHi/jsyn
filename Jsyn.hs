@@ -102,6 +102,9 @@ data Ty
   | TVal ValTy
   deriving (Eq, Show, Ord)
 
+-- Since it is (->) type
+infixr `TArrow`
+
 -- TODO: We can create a more sophisticated type system with TRecord and TList
 -- that are special cases of when the Object is not being used as a map, and when
 -- an array has the same type everywhere
@@ -218,6 +221,7 @@ data Expr
   | -- /3 arity functions
     Union Expr Expr
   | Pipe Expr Expr
+  | EMap Expr
   deriving (Show, Eq)
 
 fromConstString :: Expr -> T.Text
@@ -236,6 +240,7 @@ instance Ord Expr where
   (Get _) <= (Construct _) = True
   (Construct _) <= (Union _ _) = True
   (Union _ _) <= (Pipe _ _) = True
+  (Pipe _ _) <= (EMap _) = True
   _ <= _ = False
 
 -- ** Evaluation
@@ -262,6 +267,7 @@ eval x val = case x of
   -- partially evaluated
   Elements -> elements val
   Union f g -> union val f g
+  EMap f -> evalmap val f
 
 keys :: Value -> EvalRes
 keys (A.Object o) =
@@ -327,6 +333,12 @@ union val f g = do
     (_, A.Object _) -> Left "Left hand side of union is not an Object"
     (A.Object _, _) -> Left "Right hand side of union is not an Object"
     (_, _) -> Left "union is not with objects"
+
+evalmap :: Value -> Expr -> EvalRes
+evalmap val f =
+  case val of
+    A.Array v -> A.Array <$> sequence (V.map (eval f) v)
+    v -> Left $ "cannot map on value: " ++ show v
 
 -- A Program is what we finally want to have, a function wrapping the filter and returning it:
 -- ```js
@@ -529,7 +541,8 @@ data HExpr
   = HGet T.Text
   | HConstruct [(T.Text, HExpr)]
   | HPipe HExpr HExpr
-  | Hole ValTy
+  | HMap HExpr
+  | Hole Ty
   deriving (Show, Eq, Ord)
 
 hExprToExpr :: HExpr -> Expr
@@ -540,12 +553,14 @@ hExprToExpr h =
       Construct $ map (bimap (Const . A.String) hExprToExpr) exps
     (HPipe exp1 exp2) ->
       Pipe (hExprToExpr exp1) (hExprToExpr exp2)
+    (HMap exp) -> EMap $ hExprToExpr exp
     (Hole _) -> error "can't convert an open hypothesis to an expression"
 
 isClosed :: HExpr -> Bool
 isClosed (HGet _) = True
 isClosed (HConstruct exps) = all isClosed $ map snd exps
 isClosed (HPipe exp1 exp2) = isClosed exp1 && isClosed exp2
+isClosed (HMap exp) = isClosed exp
 isClosed (Hole h) = False
 
 indGenSearch :: [JsonExample] -> Maybe Program
@@ -560,22 +575,21 @@ indGenSearch examples =
 
 step :: ValTy -> [JsonExample] -> [HExpr] -> [Maybe Program]
 step t1 examples hs =
--- split closed and open hypotheses
--- for every closed hypothesis, check if any is consistent, if it is return that one
--- else, for each open hypotheses generate more closed/open hypotheses
--- and recursively search them
+  -- split closed and open hypotheses
+  -- for every closed hypothesis, check if any is consistent, if it is return that one
+  -- else, for each open hypotheses generate more closed/open hypotheses
+  -- and recursively search them
   let (closedhs, openhs) = partition isClosed hs
-  in
-    case find (consistent examples . hExprToExpr) closedhs of
-      Just hConsistent -> [Just . Program . hExprToExpr $ hConsistent]
-      Nothing -> case openhs of
-                   [] -> [Nothing]
-                   hs' -> programs
-                     where
-                       expandedHypotheses :: [HExpr]
-                       expandedHypotheses = concatMap (expand t1) openhs
-                       programs :: [Maybe Program]
-                       programs = step t1 examples expandedHypotheses
+   in case find (consistent examples . hExprToExpr) closedhs of
+        Just hConsistent -> [Just . Program . hExprToExpr $ hConsistent]
+        Nothing -> case openhs of
+          [] -> [Nothing]
+          hs' -> programs
+            where
+              expandedHypotheses :: [HExpr]
+              expandedHypotheses = concatMap (expand t1) openhs
+              programs :: [Maybe Program]
+              programs = step t1 examples expandedHypotheses
 
 -- given an open hypothesis, return all the hypotheses it generates
 expand :: ValTy -> HExpr -> [HExpr]
@@ -584,36 +598,32 @@ expand t1 h =
     HConstruct exps ->
       let kys = map fst exps
           -- quadratic on the number of generated hypotheses by inductiveGen (t1, t)
-          allCombinations = mapM ((\(Hole t) -> inductiveGen (t1, t)) . snd) exps
+          allCombinations = mapM ((\(Hole (TVal t)) -> inductiveGen (t1, t)) . snd) exps
        in map (HConstruct . zip kys) allCombinations
-    HPipe (Hole th1) (Hole t2) ->
-      do
-        exp1 <- inductiveGen (t1, th1)
-        exp2 <- inductiveGen (th1, t2)
-        return $ HPipe exp1 exp2
-    HPipe e1 e2 -> []
+    HPipe (Hole (TVal th1)) (Hole (TVal t2)) -> do
+      exp1 <- inductiveGen (t1, th1)
+      exp2 <- inductiveGen (th1, t2)
+      return $ HPipe exp1 exp2
+    HPipe _ _ -> []
+    HMap (Hole (TArrow (TVal a) (TVal b))) -> do
+      exp <- inductiveGen (a, b)
+      return $ HMap exp
+    HMap _ -> []
     h -> error $ show h
 
--- [
---   HPipe (Hole TNumber) (Hole TString),
---   HPipe (Hole TBool) (Hole TString),
---   HPipe (Hole TString) (Hole TString),
---   HPipe (Hole (TObject (fromList [("online",TBool),("name",TString),("host",TString)])))
---         (Hole TString)
--- ]
 
 -- TODO: Replace pair of ValTy with TArr when generalizing to multiple args ?
 
 -- | from an arrow type, return a stream of hypothesis compatible with those types
 inductiveGen :: (ValTy, ValTy) -> [HExpr]
 inductiveGen (t1, t2) =
-  getHs ++ constructHs ++ pipeHs
+  getHs ++ mapHs ++ constructHs ++ pipeHs
   where
     -- construct hypotheses
     constructHs =
       case t2 of
         TObject o ->
-          [HConstruct $ map (second Hole) $ M.toList o]
+          [HConstruct $ map (second $ Hole . TVal) $ M.toList o]
         _ -> []
     -- get hypotheses, note how this generates hypotheses without holes
     getHs =
@@ -624,6 +634,10 @@ inductiveGen (t1, t2) =
           map (HGet . fst) $ filter ((t2 ==) . snd) $ M.toList o
         _ -> []
     pipeHs =
+      -- one Pipe for each unique type in first expr
+      -- the type of second expr in HPipe must be t2
+      -- the type of first expr can be any time derived from, i.e. there's a transformation
+      -- t1 -> a
       let types =
             [TNumber, TBool, TString]
               ++ ( case t1 of
@@ -631,7 +645,10 @@ inductiveGen (t1, t2) =
                      TArray a -> [a]
                      _ -> []
                  )
-          holes = map Hole $ nub types
-       in -- quadratic in number of holes
-          HPipe <$> holes <*> [Hole t2]
-
+          holes = map (Hole . TVal) $ nub types
+       in HPipe <$> holes <*> [Hole $ TVal t2]
+    mapHs =
+      case (t1,t2) of
+        (TArray a, TArray b) ->
+          [HMap (Hole $ TVal a `TArrow` TVal b)]
+        _ -> []
