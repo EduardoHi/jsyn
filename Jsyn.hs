@@ -47,11 +47,11 @@ readJsonExamples filename = do
     Left s -> fail $ "Error decoding json: " <> s
     Right v -> return v
 
-inferVTexamples :: [JsonExample] -> (ValTy, ValTy)
+inferVTexamples :: [JsonExample] -> Ty
 inferVTexamples examples =
-  let t1 = inferArr . V.fromList $ map (inferVT . input) examples
-      t2 = inferArr . V.fromList $ map (inferVT . output) examples
-   in (t1, t2)
+  let t1 = TVal . inferArr . V.fromList $ map (inferVT . input) examples
+      t2 = TVal . inferArr . V.fromList $ map (inferVT . output) examples
+   in t1 `TArrow` t2
 
 -- From what I've learned following
 -- Programming Languages Foundations: https://softwarefoundations.cis.upenn.edu/
@@ -104,6 +104,10 @@ data Ty
 
 -- Since it is (->) type
 infixr `TArrow`
+
+tarrow :: ValTy -> ValTy -> Ty
+v `tarrow` w = TVal v `TArrow` TVal w
+
 
 -- TODO: We can create a more sophisticated type system with TRecord and TList
 -- that are special cases of when the Object is not being used as a map, and when
@@ -570,8 +574,8 @@ indGenSearch examples =
   -- x : t1, e : t2
   msum $ step t1 examples hypotheses
   where
-    (t1, t2) = inferVTexamples examples
-    hypotheses = inductiveGen (t1, t2)
+    t@(TVal t1 `TArrow` _) = inferVTexamples examples
+    hypotheses = inductiveGen t
 
 step :: ValTy -> [JsonExample] -> [HExpr] -> [Maybe Program]
 step t1 examples hs =
@@ -598,15 +602,15 @@ expand t1 h =
     HConstruct exps ->
       let kys = map fst exps
           -- quadratic on the number of generated hypotheses by inductiveGen (t1, t)
-          allCombinations = mapM ((\(Hole (TVal t)) -> inductiveGen (t1, t)) . snd) exps
+          allCombinations = mapM ((\(Hole (TVal t)) -> inductiveGen (t1 `tarrow` t)) . snd) exps
        in map (HConstruct . zip kys) allCombinations
     HPipe (Hole (TVal th1)) (Hole (TVal t2)) -> do
-      exp1 <- inductiveGen (t1, th1)
-      exp2 <- inductiveGen (th1, t2)
+      exp1 <- inductiveGen (t1 `tarrow` th1)
+      exp2 <- inductiveGen (th1 `tarrow` t2)
       return $ HPipe exp1 exp2
     HPipe _ _ -> []
-    HMap (Hole (TArrow (TVal a) (TVal b))) -> do
-      exp <- inductiveGen (a, b)
+    HMap (Hole (a `TArrow` b)) -> do
+      exp <- inductiveGen (a `TArrow` b)
       return $ HMap exp
     HMap _ -> []
     h -> error $ show h
@@ -615,8 +619,8 @@ expand t1 h =
 -- TODO: Replace pair of ValTy with TArr when generalizing to multiple args ?
 
 -- | from an arrow type, return a stream of hypothesis compatible with those types
-inductiveGen :: (ValTy, ValTy) -> [HExpr]
-inductiveGen (t1, t2) =
+inductiveGen :: Ty -> [HExpr]
+inductiveGen (TVal t1 `TArrow` TVal t2) =
   getHs ++ mapHs ++ constructHs ++ pipeHs
   where
     -- construct hypotheses
