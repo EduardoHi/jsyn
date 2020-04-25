@@ -9,6 +9,7 @@ import qualified Data.Aeson as A
 import qualified Data.ByteString.Lazy.Char8 as C
 import Data.Either
 import qualified Data.HashMap.Strict as M
+import Data.Maybe
 import Data.Semigroup
 import qualified Data.Text as T
 import Jsyn
@@ -74,6 +75,14 @@ filter6 =
 filter7 :: Expr
 filter7 =
   Pipe (Get (cstring "hostinfo")) (Get (cstring "host"))
+
+filter9 =
+  EMap
+  (Construct [
+      (cstring "host", Pipe (Get $ cstring "hostinfo") (Get $ cstring "host")),
+      (cstring "name", Pipe (Get $ cstring "hostinfo") (Get $ cstring "name")),
+      (cstring "online", Pipe (Get $ cstring "hostinfo") (Get $ cstring "online")),
+      (cstring "id", Get $ cstring "id")])
 
 types1 :: [(ValTy, ValTy)]
 types1 =
@@ -241,7 +250,30 @@ testTasks tasks =
       testEval name expr ios
       testInferVal name expected_types ios
 
+testSynthetizer :: String -> SpecWith ()
+testSynthetizer filename = do
+  examples <- runIO $ readJsonExamples filename
+  describe ("synthetizes " <> filename) $ do
+    let prg = indGenSearch examples
+
+    it "finds a program" $ prg `shouldSatisfy` isJust
+
+    it "is consistent with examples" $ do
+      let (Just Program {programBody = expr}) = prg
+      expr `shouldSatisfy` consistent examples
+
 main :: IO ()
 main =
-  hspec $
+  hspec $ do
     testTasks testCases
+
+    describe "inductive generalization search" $ do
+      testSynthetizer "tests/test1.json"
+      testSynthetizer "tests/test2.json"
+      testSynthetizer "tests/test3.json"
+      testSynthetizer "tests/test4.json"
+      testSynthetizer "tests/test5.json"
+      testSynthetizer "tests/test6.json"
+      testSynthetizer "tests/test7.json"
+      testSynthetizer "tests/test8.json"
+      testSynthetizer "tests/test9.json"
