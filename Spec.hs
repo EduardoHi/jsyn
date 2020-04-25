@@ -1,3 +1,4 @@
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- |
@@ -14,12 +15,6 @@ import Jsyn
 import Test.Hspec
 import Text.Printf
 
-readInputOutputPairs :: String -> IO [(A.Value, A.Value)]
-readInputOutputPairs filename = do
-  content <- C.readFile filename
-  case decodeJsonExamples content of
-    Left s -> fail $ "Error decoding json: " <> s
-    Right v -> pure $ map (\v -> (input v, output v)) v
 
 -- | cstring little helper to build Constant Strings in the DSL
 cstring = Const . A.String
@@ -164,7 +159,7 @@ types7 =
 data TestTask = TestTask
   { taskName :: String,
     taskExpr :: Expr,
-    taskIO :: IO [(A.Value, A.Value)],
+    taskIO :: IO [JsonExample],
     expectedTypes :: [(ValTy, ValTy)]
   }
 
@@ -173,44 +168,44 @@ testCases =
   [ TestTask
       { taskName = "identity filter",
         taskExpr = filter1,
-        taskIO = readInputOutputPairs "tests/test1.json",
+        taskIO = readJsonExamples "tests/test1.json",
         expectedTypes = types1
       },
     -- Can this be generic enough to not need the specific key names ?
     TestTask
       { taskName = "swap every key for its value",
         taskExpr = filter2,
-        taskIO = readInputOutputPairs "tests/test2.json",
+        taskIO = readJsonExamples "tests/test2.json",
         expectedTypes = types2
       },
     TestTask
       { taskName = "nest an object inside a a key from the field 'key'",
         taskExpr = filter3,
-        taskIO = readInputOutputPairs "tests/test3.json",
+        taskIO = readJsonExamples "tests/test3.json",
         expectedTypes = types3
       },
     TestTask
       { taskName = "denest an object (inverse operation of filter3)",
         taskExpr = filter4,
-        taskIO = readInputOutputPairs "tests/test4.json",
+        taskIO = readJsonExamples "tests/test4.json",
         expectedTypes = types4
       },
     TestTask
       { taskName = "get a single field from an object",
         taskExpr = filter5,
-        taskIO = readInputOutputPairs "tests/test5.json",
+        taskIO = readJsonExamples "tests/test5.json",
         expectedTypes = types5
       },
     TestTask
       { taskName = "get all but a single field from an object",
         taskExpr = filter6,
-        taskIO = readInputOutputPairs "tests/test6.json",
+        taskIO = readJsonExamples "tests/test6.json",
         expectedTypes = types6
       },
     TestTask
       { taskName = "get a value in a nested object",
         taskExpr = filter7,
-        taskIO = readInputOutputPairs "tests/test7.json",
+        taskIO = readJsonExamples "tests/test7.json",
         expectedTypes = types7
       }
   ]
@@ -219,20 +214,20 @@ fromEval :: EvalRes -> A.Value
 fromEval (Right v) = v
 fromEval (Left err) = error err
 
-testEval :: String -> Expr -> [(A.Value, A.Value)] -> SpecWith ()
+testEval :: String -> Expr -> [JsonExample] -> SpecWith ()
 testEval name expr ios =
   describe "eval"
     $ forM_ (zip [1 ..] ios)
-    $ \(n, (input, output)) ->
+    $ \(n, JsonExample {input, output}) ->
       it ("example #" <> show n <> " evaluates correctly") $
         fromEval (eval expr input) `shouldBe` output
 
-testInferVal :: String -> [(ValTy, ValTy)] -> [(A.Value, A.Value)] -> SpecWith ()
+testInferVal :: String -> [(ValTy, ValTy)] -> [JsonExample] -> SpecWith ()
 testInferVal name expected ios =
   describe "inference" $
     forM_ (zip3 [1 ..] expected ios) go
   where
-    go (n, (expected_i, expected_o), (input, output)) =
+    go (n, (expected_i, expected_o), JsonExample{input, output}) =
       do
         it ("example #" <> show n <> " infers input type correctly") $
           inferVT input `shouldBe` expected_i
