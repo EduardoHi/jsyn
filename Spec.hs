@@ -15,7 +15,6 @@ import Jsyn
 import Test.Hspec
 import Text.Printf
 
-
 -- | cstring little helper to build Constant Strings in the DSL
 cstring = Const . A.String
 
@@ -227,20 +226,22 @@ testInferVal name expected ios =
   describe "inference" $
     forM_ (zip3 [1 ..] expected ios) go
   where
-    go (n, (expected_i, expected_o), JsonExample{input, output}) =
+    go (n, (expected_i, expected_o), JsonExample {input, output}) =
       do
         it ("example #" <> show n <> " infers input type correctly") $
           inferVT input `shouldBe` expected_i
         it ("example #" <> show n <> " infers output type correctly") $
           inferVT output `shouldBe` expected_o
 
-main :: IO ()
-main = hspec $ do
-  let exprs = map taskExpr testCases
-  let expected_types = map expectedTypes testCases
-
-  forM_ (zip [1..] testCases) $ \(i, TestTask name expr readios expected_types) -> do
+testTasks :: [TestTask] -> SpecWith ()
+testTasks tasks =
+  forM_ (zip [1 ..] tasks) $ \(i, TestTask name expr readios expected_types) -> do
     ios <- runIO readios
     describe ("task " <> show i <> ": " <> name) $ do
       testEval name expr ios
       testInferVal name expected_types ios
+
+main :: IO ()
+main =
+  hspec $
+    testTasks testCases
