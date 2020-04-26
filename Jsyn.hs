@@ -751,10 +751,18 @@ subst var val exp =
     LConstruct xs ->
       LConstruct $ fmap (second (subst var val)) xs
     Lambda v body
-      | v /= var -> Lambda v (subst var val body)
+      | v /= var && v `notElem` freeVars val -> Lambda v (subst var val body)
+      | otherwise -> Lambda v body
     LApp x y ->
       LApp (subst var val x) (subst var val y)
-    lval@(LVal _) -> lval
+    e -> e
+
+freeVars :: LExpr -> [Variable]
+freeVars e =
+  case e of
+    LVar v -> [v]
+    Lambda v body -> filter (v/=) $ freeVars body
+    e -> freeVars e
 
 -- toplevel evaluation of extended Lambda Calculus
 levalProg :: LExpr -> Value -> LEvalRes
