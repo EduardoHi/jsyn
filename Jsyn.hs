@@ -566,6 +566,17 @@ data HExpr
   | Hole Ty
   deriving (Show, Eq, Ord)
 
+prettyHExpr :: HExpr -> T.Text
+prettyHExpr e =
+  case e of
+    (HGet k) -> "get(" <> k <> ")"
+    (HConstruct ps) -> "{" <> inside <> "}"
+      where inside =
+              T.intercalate ", " $ map (\(k,v) -> k <> ": " <> prettyHExpr v) ps
+    (HPipe e1 e2) -> prettyHExpr e1 <> " | " <> prettyHExpr e2
+    (HMap arg) -> "map("<> prettyHExpr arg <>")"
+    (Hole t) -> "hole:" <> prettyTy t
+
 hExprToExpr :: HExpr -> Expr
 hExprToExpr h =
   case h of
@@ -673,6 +684,10 @@ inductiveGen (TVal t1 `TArrow` TVal t2) =
           [HMap (Hole $ TVal a `TArrow` TVal b)]
         _ -> []
 
+-------------------------------------------------------------------------------
+--                      Lambda Calculus Extension DSL                                                                      --
+-------------------------------------------------------------------------------
+
 --
 -- Rework of the DSL as a simple lambda calculus extension
 --
@@ -712,7 +727,7 @@ lapp fun arg = do
 
 lget :: LExpr -> T.Text -> LEvalRes
 lget exp k =
-  pure exp >>= lget'
+  leval exp >>= lget'
   where
     lget' :: LExpr -> LEvalRes
     lget' e' =
@@ -761,7 +776,7 @@ freeVars :: LExpr -> [Variable]
 freeVars e =
   case e of
     LVar v -> [v]
-    Lambda v body -> filter (v/=) $ freeVars body
+    Lambda v body -> filter (v /=) $ freeVars body
     e -> freeVars e
 
 -- toplevel evaluation of extended Lambda Calculus
