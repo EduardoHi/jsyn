@@ -108,6 +108,23 @@ infixr `TArrow`
 tarrow :: ValTy -> ValTy -> Ty
 v `tarrow` w = TVal v `TArrow` TVal w
 
+prettyTy :: Ty -> T.Text
+prettyTy t = case t of
+  TArrow a b -> prettyTy a <> " -> " <> prettyTy b
+  TVal a -> prettyValTy a
+
+prettyValTy :: ValTy -> T.Text
+prettyValTy v = case v of
+  TValue -> "Value"
+  TObject o -> "{" <> inside <> "}"
+    where inside =
+            T.intercalate ", " $ map (\(k,v) -> k <> ": " <> prettyValTy v) $ M.toList o
+  TArray a -> "[" <> prettyValTy a <> "]"
+  TString -> "String"
+  TNumber -> "Number"
+  TBool -> "Bool"
+  TNull -> "Null"
+
 
 -- TODO: We can create a more sophisticated type system with TRecord and TList
 -- that are special cases of when the Object is not being used as a map, and when
@@ -358,7 +375,7 @@ toJS :: Program -> T.Text
 toJS Program {programBody = body} =
   T.unlines
     [ "function program(obj) {",
-      "return " <> toJSInline "obj" body,
+      "    return " <> toJSInline "obj" body,
       "}"
     ]
 
