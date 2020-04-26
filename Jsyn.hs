@@ -103,7 +103,7 @@ data Ty
   deriving (Eq, Show, Ord)
 
 -- Since it is (->) type
-infixr `TArrow`
+infixr 9 `TArrow`
 
 tarrow :: ValTy -> ValTy -> Ty
 v `tarrow` w = TVal v `TArrow` TVal w
@@ -117,14 +117,14 @@ prettyValTy :: ValTy -> T.Text
 prettyValTy v = case v of
   TValue -> "Value"
   TObject o -> "{" <> inside <> "}"
-    where inside =
-            T.intercalate ", " $ map (\(k,v) -> k <> ": " <> prettyValTy v) $ M.toList o
+    where
+      inside =
+        T.intercalate ", " $ map (\(k, v) -> k <> ": " <> prettyValTy v) $ M.toList o
   TArray a -> "[" <> prettyValTy a <> "]"
   TString -> "String"
   TNumber -> "Number"
   TBool -> "Bool"
   TNull -> "Null"
-
 
 -- TODO: We can create a more sophisticated type system with TRecord and TList
 -- that are special cases of when the Object is not being used as a map, and when
@@ -632,7 +632,6 @@ expand t1 h =
     HMap _ -> []
     h -> error $ show h
 
-
 -- TODO: Replace pair of ValTy with TArr when generalizing to multiple args ?
 
 -- | from an arrow type, return a stream of hypothesis compatible with those types
@@ -669,7 +668,95 @@ inductiveGen (TVal t1 `TArrow` TVal t2) =
           holes = map (Hole . TVal) $ nub types
        in HPipe <$> holes <*> [Hole $ TVal t2]
     mapHs =
-      case (t1,t2) of
+      case (t1, t2) of
         (TArray a, TArray b) ->
           [HMap (Hole $ TVal a `TArrow` TVal b)]
         _ -> []
+
+--
+-- Rework of the DSL as a simple lambda calculus extension
+--
+
+newtype Variable = Variable T.Text
+  deriving (Show, Eq)
+
+-- LVar, LVal and Lambda are the core Lambda Calculus,
+-- Get and Construct are extensions
+data LExpr
+  = LVar Variable
+  | LVal Value
+  | Lambda Variable LExpr
+  | LApp LExpr LExpr
+  | LGet LExpr T.Text
+  | LConstruct [(T.Text, LExpr)]
+  deriving (Show, Eq)
+
+type LEvalRes = Either T.Text LExpr
+
+leval :: LExpr -> LEvalRes
+leval e = case e of
+  LGet e k -> lget e k
+  LConstruct xs -> lconstruct xs
+  LApp fun arg -> lapp fun arg
+  -- Lambda, LVar and LVal eval to themselves
+  e -> Right e
+
+lapp :: LExpr -> LExpr -> LEvalRes
+lapp fun arg = do
+  fun' <- leval fun
+  case fun' of
+    Lambda var body -> do
+      arg' <- leval arg
+      leval (subst var arg' body)
+    x -> Left $ T.pack (show x) <> "is not a function"
+
+lget :: LExpr -> T.Text -> LEvalRes
+lget exp k =
+  pure exp >>= lget'
+  where
+    lget' :: LExpr -> LEvalRes
+    lget' e' =
+      case e' of
+        LVar v -> Left $ "unbound variable:" <> T.pack (show v)
+        LVal (A.Object o) ->
+          case M.lookup k o of
+            Just v -> Right $ LVal v
+            Nothing -> keyerr k o
+        e -> Left $ T.pack (show e) <> " is not an object"
+    keyerr k o =
+      Left $ "key: \"" <> k <> "\" not found in object: " <> T.pack (show o)
+
+lconstruct :: [(T.Text, LExpr)] -> LEvalRes
+lconstruct expPairs =
+  let (kys, vls) = unzip expPairs
+   in do
+        vls' <- mapM leval vls
+        vls'' <- mapM go vls'
+        return $ LVal . A.Object . M.fromList $ zip kys vls''
+  where
+    go :: LExpr -> Either T.Text A.Value
+    go v =
+      case v of
+        LVal x -> Right x
+        x -> Left $ T.pack (show x) <> " is not a value"
+
+-- | substitute all instances of `var` with `val` in `exp`
+subst :: Variable -> LExpr -> LExpr -> LExpr
+subst var val exp =
+  case exp of
+    LVar v
+      | v == var -> val
+    LGet e k ->
+      LGet (subst var val e) k
+    LConstruct xs ->
+      LConstruct $ fmap (second (subst var val)) xs
+    Lambda v body
+      | v /= var -> Lambda v (subst var val body)
+    LApp x y ->
+      LApp (subst var val x) (subst var val y)
+    lval@(LVal _) -> lval
+
+-- toplevel evaluation of extended Lambda Calculus
+levalProg :: LExpr -> Value -> LEvalRes
+levalProg prg val =
+  leval $ LApp prg (LVal val)
