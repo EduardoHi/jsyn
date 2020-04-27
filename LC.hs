@@ -144,7 +144,7 @@ fromTObj _ = error "not an object"
 --
 
 data HExpr
-  = HHole Variable Ty -- variable literal annotated with a type
+  = HHole Ty -- variable literal annotated with a type
   | HVar Variable -- variable literal annotated with a type
   | HLam Variable HExpr -- lambda abstraction
   | HApp HExpr HExpr -- function application
@@ -158,7 +158,7 @@ concretize :: HExpr -> Expr
 concretize e =
   case e of
     (HVar v) -> Var v
-    (HHole v t) -> error $ "Can't concretize expression with hole: " <> show v <> show t
+    (HHole t) -> error $ "Can't concretize expression with hole: " <> show t
     (HLam v e) -> Lam v $ concretize e
     (HApp f a) -> App (concretize f) (concretize a)
     (HGet k e) -> Get k (concretize e)
@@ -271,14 +271,17 @@ type Search = State [Variable]
 
 -- | given a type Ty generate all possible open hypothesis
 -- that 'fit' it
-open :: Ty -> Search [Hypothesis]
-open t = do
-  x <- fresh 1
-  undefined
+genOpen :: Ty -> [Hypothesis]
+genOpen =
+  genOpenCon
 
--- let gH = [HGet (HVar x (TObject $ M.fromList [("")])) ""]
--- let mH = case t of
---       TArray a -> [HMap (HVar x (TVal ))]
+genOpenCon :: Ty -> [Hypothesis]
+genOpenCon t = 
+  case t of
+    TVal (TObject o) ->
+      let kts = M.toList o
+      in [HCon $ map (second $ HHole . TVal) kts]
+    _ -> []
 
 -- | return a list of `c` fresh variable names
 fresh :: Int -> Search [Variable]
