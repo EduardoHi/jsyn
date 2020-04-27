@@ -254,7 +254,7 @@ testSynthetizer :: String -> SpecWith ()
 testSynthetizer filename = do
   examples <- runIO $ readJsonExamples filename
   describe ("synthetizes " <> filename) $ do
-    let prg = indGenSearch examples
+    let prg = indGenSynth examples
 
     it "finds a program" $ prg `shouldSatisfy` isJust
 

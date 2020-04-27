@@ -641,7 +641,10 @@ expand t1 h =
       exp <- inductiveGen (a `TArrow` b)
       return $ HMap exp
     HMap _ -> []
-    h -> error $ show h
+    -- HMap arg -> do
+    --   exp <- expand t1 h
+    --   return $ HMap exp
+    h -> error $ T.unpack $ prettyHExpr h
 
 -- TODO: Replace pair of ValTy with TArr when generalizing to multiple args ?
 

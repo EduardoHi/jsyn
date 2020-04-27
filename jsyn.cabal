@@ -53,7 +53,8 @@ common dependencies
                  text,
                  vector,
                  scientific,
-                 hspec
+                 hspec,
+                 mtl
 
 executable jsyn
   import: dependencies
