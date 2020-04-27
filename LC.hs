@@ -111,6 +111,9 @@ data Ty
 
 infixr 9 `TArrow`
 
+isTArrow (TArrow _ _) = True
+isTArrow _ = False
+
 isTVal (TVal _) = True
 isTVal _ = False
 
@@ -136,12 +139,13 @@ fromTObj (TObject o) = o
 fromTObj _ = error "not an object"
 
 -- differences to Expr:
--- 1. Variable node has a type annotation
+-- 1. there's a hole node that represents a free variable
 -- 2. there is no value node
 --
 
 data HExpr
-  = HVar Variable Ty -- variable literal annotated with a type
+  = HHole Variable Ty -- variable literal annotated with a type
+  | HVar Variable -- variable literal annotated with a type
   | HLam Variable HExpr -- lambda abstraction
   | HApp HExpr HExpr -- function application
   | HGet T.Text HExpr -- getter of object
@@ -153,7 +157,8 @@ data HExpr
 concretize :: HExpr -> Expr
 concretize e =
   case e of
-    (HVar v _) -> Var v
+    (HVar v) -> Var v
+    (HHole v t) -> error $ "Can't concretize expression with hole: " <> show v <> show t
     (HLam v e) -> Lam v $ concretize e
     (HApp f a) -> App (concretize f) (concretize a)
     (HGet k e) -> Get k (concretize e)
@@ -168,6 +173,7 @@ concretize e =
 type Hypothesis = HExpr
 
 type Context = [(Variable, Ty)]
+
 -- isClosed :: Hypothesis -> Bool
 -- isClosed (Hypothesis [] _) = True
 -- isClosed _ = False
@@ -175,34 +181,91 @@ type Context = [(Variable, Ty)]
 -- isOpen :: Hypothesis -> Bool
 -- isOpen = not . isClosed
 
-matching :: (b -> Bool) -> [(a,b)] -> [(a,b)]
+matching :: (b -> Bool) -> [(a, b)] -> [(a, b)]
 matching pred = filter (pred . snd)
 
 genClose :: Ty -> Context -> [Hypothesis]
 genClose t ctx =
-  vars ++ gets
+  genVars t ctx
+    ++ genGets t ctx
+    ++ genCons t ctx
+    ++ genApps t ctx
   where
-    -- matching :: (b -> Bool) -> [(Variable,b)]
-    -- matching pred =
-    --   filter (pred . snd) ctx
-    vars =
-      map (uncurry HVar) $ matching (t==) ctx
-    gets =
-      case t of
-        TVal valt ->
-          let
-            valtys :: [(Variable,ValTy)]
-            valtys = map (second fromTVal) $ matching isTVal ctx
-            objs :: [(Variable, ValTy)]
-            objs = matching isTObj valtys
-            o2gets :: (Variable, ValTy) -> [Hypothesis]
-            o2gets (v,o) = map (\(k,_) -> HGet k (HVar v (TVal o)))
-                           $ matching (valt==)
-                           $ M.toList (fromTObj o)
-          in concatMap o2gets objs
-        _ -> []
+    genVars t ctx =
+      map (HVar . fst) $ matching (t ==) ctx
 
+-- | generate all possible expressions that return type t.
+-- if t is not an object it returns the empty list
+-- if t is an object, it returns all possible combinations
+-- of current variables in context.
+--
+-- e.g. if context has [("a", TString), ("b", TString), ("c", TNumber), ("d", TNumber)]
+-- and we want to fill t = {k: TString, k2: TNumber}
+-- it returns [ {k:a, k2:c}, {k:a, k2:d}, {k:b, k2:c}, {k:b, k2:d} ]
+-- as possible expressions
+genCons :: Ty -> Context -> [Hypothesis]
+genCons t ctx =
+  case t of
+    TVal (TObject o) ->
+      let -- get only the variables from ctx that return values
+          valtys :: [(Variable, ValTy)]
+          valtys =
+            map (second fromTVal) $
+              matching isTVal ctx
+          -- from a key and value type, generate a stream of all
+          -- pairs of that key and a correct type expression
+          go :: (T.Text, ValTy) -> [(T.Text, HExpr)]
+          go (k, vt) = do
+            vts <- map (HVar . fst) $ matching (vt ==) valtys
+            return (k, vts)
+       in map HCon $ mapM go $ M.toList o
+    _ -> []
 
+genApps :: Ty -> Context -> [Hypothesis]
+genApps t ctx =
+  let functions = matching isTArrow ctx
+      fsreturnT = matching (\(TArrow a b) -> b == t) functions
+   in do
+        -- since it is in the list monad, this generates all possible combinations
+        -- of functions f and arguments varA
+        (f, TArrow a _) <- fsreturnT
+        (varA, _) <- matching (a ==) ctx
+        return $ HApp (HVar f) (HVar varA)
+
+-- | Generate all Get expressions that match type t with all variables in context
+-- from the variables that are objects, we generate all possible get expressions that
+-- can return t, including nested expressions.
+-- e.g.
+-- if y : {z: TString, x {b: TString}} is the context,
+-- y.z and y.x.b will be generated
+genGets :: Ty -> Context -> [Hypothesis]
+genGets t ctx =
+  case t of
+    TVal valt ->
+      let valtys :: [(Variable, ValTy)]
+          valtys =
+            matching isTObj
+              $ map (second fromTVal)
+              $ matching isTVal ctx
+          o2gets :: (Variable, ValTy) -> [Hypothesis]
+          o2gets (v, o) =
+            map (foldr HGet (HVar v)) $
+              pathsToT o valt
+       in concatMap o2gets valtys
+    _ -> []
+
+-- | all the paths that are of type t inside object o.
+-- eg
+-- > y = (TObject (M.fromList [("x", (TObject (M.fromList [("b", TString)]))), ("z", TString)]))
+-- > pathsToT y
+-- [["z"],["x","b"]]
+pathsToT :: ValTy -> ValTy -> [[T.Text]]
+pathsToT o t =
+  let keyTypes = M.toList (fromTObj o)
+      inmediate = map (\(k, to) -> [k]) $ matching (t ==) keyTypes
+      recursive =
+        map (\(k, to) -> pathsToT to t >>= (k :)) $ matching isTObj keyTypes
+   in inmediate ++ recursive
 
 type Search = State [Variable]
 
@@ -212,12 +275,10 @@ open :: Ty -> Search [Hypothesis]
 open t = do
   x <- fresh 1
   undefined
-  -- let gH = [HGet (HVar x (TObject $ M.fromList [("")])) ""]
-  -- let mH = case t of
-  --       TArray a -> [HMap (HVar x (TVal ))]
 
-
-
+-- let gH = [HGet (HVar x (TObject $ M.fromList [("")])) ""]
+-- let mH = case t of
+--       TArray a -> [HMap (HVar x (TVal ))]
 
 -- | return a list of `c` fresh variable names
 fresh :: Int -> Search [Variable]
