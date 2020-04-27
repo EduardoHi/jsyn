@@ -70,8 +70,6 @@ inferVTexamples examples =
 
 -- ** Values
 
-type Object = A.Object
-
 type Value = A.Value
 
 isString :: Value -> Bool
@@ -595,18 +593,18 @@ isClosed (HPipe exp1 exp2) = isClosed exp1 && isClosed exp2
 isClosed (HMap exp) = isClosed exp
 isClosed (Hole h) = False
 
-indGenSearch :: [JsonExample] -> Maybe Program
-indGenSearch examples =
+indGenSynth :: [JsonExample] -> Maybe Program
+indGenSynth examples =
   -- search a program of the form:
   -- \x . e
   -- x : t1, e : t2
-  msum $ step t1 examples hypotheses
+  msum $ indGenSearch t1 examples hypotheses
   where
     t@(TVal t1 `TArrow` _) = inferVTexamples examples
     hypotheses = inductiveGen t
 
-step :: ValTy -> [JsonExample] -> [HExpr] -> [Maybe Program]
-step t1 examples hs =
+indGenSearch :: ValTy -> [JsonExample] -> [HExpr] -> [Maybe Program]
+indGenSearch t1 examples hs =
   -- split closed and open hypotheses
   -- for every closed hypothesis, check if any is consistent, if it is return that one
   -- else, for each open hypotheses generate more closed/open hypotheses
@@ -621,16 +619,18 @@ step t1 examples hs =
               expandedHypotheses :: [HExpr]
               expandedHypotheses = concatMap (expand t1) openhs
               programs :: [Maybe Program]
-              programs = step t1 examples expandedHypotheses
+              programs = indGenSearch t1 examples expandedHypotheses
 
--- given an open hypothesis, return all the hypotheses it generates
+-- given an open hypothesis, return all the hypotheses it generates by
+-- filling it's holes
 expand :: ValTy -> HExpr -> [HExpr]
 expand t1 h =
   case h of
     HConstruct exps ->
       let kys = map fst exps
-          -- quadratic on the number of generated hypotheses by inductiveGen (t1, t)
-          allCombinations = mapM ((\(Hole (TVal t)) -> inductiveGen (t1 `tarrow` t)) . snd) exps
+          -- quadratic on the number of generated hypotheses by inductiveGen
+          allCombinations =
+            mapM ((\(Hole (TVal t)) -> inductiveGen (t1 `tarrow` t)) . snd) exps
        in map (HConstruct . zip kys) allCombinations
     HPipe (Hole (TVal th1)) (Hole (TVal t2)) -> do
       exp1 <- inductiveGen (t1 `tarrow` th1)
