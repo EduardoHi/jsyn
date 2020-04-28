@@ -244,6 +244,7 @@ data Expr
   | EMap Expr
   | LConcat Expr Expr
   | ToList Expr
+  | Flatten Expr
   deriving (Show, Eq)
 
 fromConstString :: Expr -> T.Text
@@ -265,6 +266,7 @@ instance Ord Expr where
   (Pipe _ _) <= (EMap _) = True
   (EMap _) <= (LConcat _ _) = True
   (LConcat _ _) <= (ToList _) = True
+  (ToList _) <= (Flatten _) = True
   _ <= _ = False
 
 -- ** Evaluation
@@ -296,6 +298,7 @@ eval x val = case x of
   ToList e -> do
     e' <- eval e val
     return $ A.Array $ V.fromList [e']
+  Flatten e -> flatten val e
 
 keys :: Value -> EvalRes
 keys (A.Object o) =
@@ -374,10 +377,23 @@ evalconcat val l r = do
   r' <- eval r val
   case (l', r') of
     (A.Array v1, A.Array v2) -> Right $ A.Array $ v1 <> v2
-    (a, b) -> Right $ A.Array $ V.fromList [a,b]
-    -- (_, A.Array _) -> Left "Left hand side of concat is not an Array"
-    -- (A.Array _, _) -> Left "Right hand side of concat is not an Array"
-    -- (_, _) -> Left "concat is not between lists"
+    (_, A.Array _) -> Left "Left hand side of concat is not an Array"
+    (A.Array _, _) -> Left "Right hand side of concat is not an Array"
+    (_, _) -> Left "concat is not between lists"
+
+flatten :: Value -> Expr -> EvalRes
+flatten val e = do
+  e' <- eval e val
+  case e' of
+    A.Array as ->
+      let
+        vs :: Either String (V.Vector Value)
+        vs = V.concatMap id <$> V.mapM go as
+        go (A.Array v) = Right v
+        go x = Left $ show x <> " can't be flatteneed since it is not an array of arrays"
+      in
+        second A.Array vs
+    _ -> Left $ show e' <> "can't be flattened since it is not an array"
 
 -- A Program is what we finally want to have, a function wrapping the filter and returning it:
 -- ```js
