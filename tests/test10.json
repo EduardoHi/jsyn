@@ -1,0 +1,34 @@
+[
+  {
+    "input": {
+      "hostinfo": {
+        "host": "<host1>",
+        "name": "<name1>",
+        "online": true
+      },
+      "id": 0
+    },
+    "output": {
+      "host": "<host1>",
+      "name": "<name1>",
+      "online": true,
+      "id": 0
+    }
+  },
+  {
+    "input": {
+      "hostinfo": {
+        "host": "<host2>",
+        "name": "<name2>",
+        "online": true
+      },
+      "id": 1
+    },
+    "output": {
+      "host": "<host2>",
+      "name": "<name2>",
+      "online": true,
+      "id": 1
+    }
+  }
+]
