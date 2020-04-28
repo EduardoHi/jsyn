@@ -653,16 +653,18 @@ expand t1 h =
       exp1 <- inductiveGen (t1 `tarrow` th1)
       exp2 <- inductiveGen t
       return $ HPipe exp1 exp2
-    HPipe e1 e2 -> []
-    -- [HPipe (head $ expand t1 e1) (head $ expand t1 e2)]
+    -- information of t2 is lost !?
+    -- HPipe e1 e2 -> do
+    --   ex1 <- expand t1 e1
+    --   ex2 <- expand t2 e2
+    --   return $ HPipe ex1 ex2
     HMap (Hole (a `TArrow` b)) -> do
       exp <- inductiveGen (a `TArrow` b)
       return $ HMap exp
     --
-    HMap e -> map HMap (expand t1 e)
-    -- HMap arg -> do
-    --   exp <- expand t1 h
-    --   return $ HMap exp
+    HMap e ->
+      let (TArray inside) = t1
+      in map HMap (expand inside e)
     g@(HGet _) -> pure g
     h -> error $ T.unpack $ prettyHExpr h
   where
