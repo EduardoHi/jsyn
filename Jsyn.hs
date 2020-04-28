@@ -10,7 +10,7 @@ import Data.Bifunctor (bimap, first, second)
 import qualified Data.ByteString.Lazy.Char8 as C
 import Data.Either
 import qualified Data.HashMap.Strict as M
-import Data.List (find, nub, nubBy, partition, sort)
+import Data.List (find, nub, nubBy, partition, sort, sortOn)
 import Data.Maybe
 import Data.Scientific
 import Data.Semigroup
@@ -595,10 +595,11 @@ unify = undefined
 data HExpr
   = HGet T.Text
   | HConstruct [(T.Text, HExpr)]
-  | HPipe HExpr HExpr
-  | HMap HExpr
+  | HPipe HExpr HExpr ValTy
+  | HMap HExpr ValTy
   | HConcat HExpr HExpr
   | HToList HExpr
+  | HFlatten HExpr
   | Hole Ty
   deriving (Show, Eq, Ord)
 
@@ -617,10 +618,11 @@ prettyHExpr e =
       where
         inside =
           T.intercalate ", " $ map (\(k, v) -> k <> ": " <> prettyHExpr v) ps
-    (HPipe e1 e2) -> prettyHExpr e1 <> " | " <> prettyHExpr e2
-    (HMap arg) -> "map(" <> prettyHExpr arg <> ")"
+    (HPipe e1 e2 _) -> prettyHExpr e1 <> " | " <> prettyHExpr e2
+    (HMap arg _) -> "map(" <> prettyHExpr arg <> ")"
     (HConcat a b) -> prettyHExpr a <> " <> " <> prettyHExpr b
     (HToList a) -> "toList(" <> prettyHExpr a <> ")"
+    (HFlatten a) -> "flatten(" <> prettyHExpr a <> ")"
     (Hole t) -> "hole:" <> prettyTy t
 
 hExprToExpr :: HExpr -> Expr
@@ -629,22 +631,35 @@ hExprToExpr h =
     (HGet t) -> Get . Const . A.String $ t
     (HConstruct exps) ->
       Construct $ map (bimap (Const . A.String) hExprToExpr) exps
-    (HPipe exp1 exp2) ->
+    (HPipe exp1 exp2 _) ->
       Pipe (hExprToExpr exp1) (hExprToExpr exp2)
     (HConcat exp1 exp2) ->
       LConcat (hExprToExpr exp1) (hExprToExpr exp2)
     (HToList exp) -> ToList $ hExprToExpr exp
-    (HMap exp) -> EMap $ hExprToExpr exp
+    (HFlatten exp) -> Flatten $ hExprToExpr exp
+    (HMap exp _) -> EMap $ hExprToExpr exp
     (Hole _) -> error "can't convert an open hypothesis to an expression"
 
 isClosed :: HExpr -> Bool
 isClosed (HGet _) = True
 isClosed (HConstruct exps) = all isClosed $ map snd exps
-isClosed (HPipe exp1 exp2) = isClosed exp1 && isClosed exp2
-isClosed (HMap exp) = isClosed exp
+isClosed (HPipe exp1 exp2 _) = isClosed exp1 && isClosed exp2
+isClosed (HMap exp _) = isClosed exp
 isClosed (HConcat exp1 exp2) = isClosed exp1 && isClosed exp2
 isClosed (HToList exp) = isClosed exp
+isClosed (HFlatten exp) = isClosed exp
 isClosed (Hole h) = False
+
+hSize :: HExpr -> Int
+hSize (HGet _) = 1
+hSize (HConstruct exps) = 1 + sum (map (hSize . snd) exps)
+hSize (HPipe exp1 exp2 _) = hSize exp1 + hSize exp2
+hSize (HMap exp _) = 1 + hSize exp
+hSize (HConcat exp1 exp2) = 1 + hSize exp1 + hSize exp2
+hSize (HToList exp) = 1 + hSize exp
+hSize (HFlatten exp) = 1 + hSize exp
+hSize (Hole h) = 1
+
 
 indGenSynth :: [JsonExample] -> Maybe Program
 indGenSynth examples =
@@ -695,23 +710,22 @@ expand t1 h =
           go :: (T.Text, [HExpr]) -> [(T.Text, HExpr)]
           go (k, hes) = hes >>= (\he -> pure (k, he))
        in map HConstruct $ mapM go modifiedExps
-    HPipe (Hole (TVal th1)) (Hole t) -> do
+    HPipe (Hole (TVal th1)) (Hole t) _ -> do
       exp1 <- inductiveGen (t1 `tarrow` th1)
       exp2 <- inductiveGen t
-      return $ HPipe exp1 exp2
-    -- information of t2 is lost !?
-    HPipe _ _ -> []
-    -- HPipe e1 e2 -> do
-    --   ex1 <- expand t1 e1
-    --   ex2 <- expand t2 e2
-    --   return $ HPipe ex1 ex2
-    HMap (Hole (a `TArrow` b)) -> do
+      return $ HPipe exp1 exp2 th1
+
+    HPipe e1 e2 interT -> do
+      ex1 <- expand t1 e1
+      ex2 <- expand interT e2
+      return $ HPipe ex1 ex2 interT
+
+    HMap (Hole (a `TArrow` b)) t -> do
       exp <- inductiveGen (a `TArrow` b)
-      return $ HMap exp
+      return $ HMap exp t
     --
-    HMap e ->
-      let (TArray inside) = t1
-       in map HMap (expand inside e)
+    HMap e t ->
+      map (flip HMap t) (expand t e)
 
     HConcat (Hole (TVal lt)) (Hole (TVal rt)) -> do
       expl <- inductiveGen (t1 `tarrow` lt)
@@ -730,6 +744,13 @@ expand t1 h =
     HToList e ->
        map HToList (expand t1 e)
 
+    HFlatten (Hole (TVal a)) -> do
+      exp <- inductiveGen (t1 `tarrow` a)
+      return $ HFlatten exp
+
+    HFlatten e ->
+       map HFlatten (expand t1 e)
+
     g@(HGet _) -> pure g
     h -> error $ T.unpack $ prettyHExpr h
   where
@@ -741,7 +762,7 @@ expand t1 h =
 -- | from an arrow type, return a stream of hypothesis compatible with those types
 inductiveGen :: Ty -> [HExpr]
 inductiveGen (TVal t1 `TArrow` TVal t2) =
-  getHs ++ mapHs ++ toListHs ++ concatHs ++ constructHs ++ pipeHs
+  getHs ++ mapHs ++ toListHs ++ flattenHs ++ concatHs ++ constructHs ++ pipeHs
   where
     -- get hypotheses, note how this generates hypotheses without holes
     getHs =
@@ -769,11 +790,11 @@ inductiveGen (TVal t1 `TArrow` TVal t2) =
           holes = map (Hole . TVal) types
        in do
             ta <- types
-            return $ HPipe (Hole $ TVal ta) (Hole $ ta `tarrow` t2)
+            return $ HPipe (Hole $ TVal ta) (Hole $ ta `tarrow` t2) ta
     mapHs =
       case (t1, t2) of
         (TArray a, TArray b) ->
-          [HMap (Hole $ TVal a `TArrow` TVal b)]
+          [HMap (Hole $ TVal a `TArrow` TVal b) a]
         _ -> []
     -- if the result is an array, then it can be produced by concatenating
     -- two arrays of the same type
@@ -786,4 +807,11 @@ inductiveGen (TVal t1 `TArrow` TVal t2) =
     toListHs =
       case t2 of
         TArray t -> [HToList (Hole $ TVal t)]
+        _ -> []
+
+    -- if t2 is an array, it can be produced by flattening
+    -- an array of t2s
+    flattenHs =
+      case t2 of
+        (TArray _) -> [HFlatten (Hole $ TVal (TArray t2))]
         _ -> []

@@ -286,5 +286,6 @@ main =
       testSynthetizer "tests/test8.json"
       testSynthetizer "tests/test9.json"
       testSynthetizer "tests/test10.json"
-      -- testSynthetizer "tests/test11.json"
+      testSynthetizer "tests/test11.json"
       testSynthetizer "tests/test12.json"
+      testSynthetizer "tests/test13.json"
