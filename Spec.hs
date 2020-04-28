@@ -78,11 +78,19 @@ filter7 =
 
 filter9 =
   EMap
-  (Construct [
-      (cstring "host", Pipe (Get $ cstring "hostinfo") (Get $ cstring "host")),
-      (cstring "name", Pipe (Get $ cstring "hostinfo") (Get $ cstring "name")),
-      (cstring "online", Pipe (Get $ cstring "hostinfo") (Get $ cstring "online")),
-      (cstring "id", Get $ cstring "id")])
+    ( Construct
+        [ (cstring "host", Pipe (Get $ cstring "hostinfo") (Get $ cstring "host")),
+          (cstring "name", Pipe (Get $ cstring "hostinfo") (Get $ cstring "name")),
+          (cstring "online", Pipe (Get $ cstring "hostinfo") (Get $ cstring "online")),
+          (cstring "id", Get $ cstring "id")
+        ]
+    )
+
+filter12 =
+  Construct
+    [ (cstring "name", Get $ cstring "name"),
+      (cstring "numbers", LConcat (Get $ cstring "number1") (Get $ cstring "number2"))
+    ]
 
 types1 :: [(ValTy, ValTy)]
 types1 =
@@ -278,4 +286,5 @@ main =
       testSynthetizer "tests/test8.json"
       testSynthetizer "tests/test9.json"
       testSynthetizer "tests/test10.json"
-      testSynthetizer "tests/test11.json"
+      -- testSynthetizer "tests/test11.json"
+      testSynthetizer "tests/test12.json"

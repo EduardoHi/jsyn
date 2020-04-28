@@ -3,6 +3,7 @@
 
 module Jsyn where
 
+
 import Control.Monad
 import qualified Data.Aeson as A
 import Data.Bifunctor (bimap, first, second)
@@ -241,6 +242,8 @@ data Expr
     Union Expr Expr
   | Pipe Expr Expr
   | EMap Expr
+  | LConcat Expr Expr
+  | ToList Expr
   deriving (Show, Eq)
 
 fromConstString :: Expr -> T.Text
@@ -260,6 +263,8 @@ instance Ord Expr where
   (Construct _) <= (Union _ _) = True
   (Union _ _) <= (Pipe _ _) = True
   (Pipe _ _) <= (EMap _) = True
+  (EMap _) <= (LConcat _ _) = True
+  (LConcat _ _) <= (ToList _) = True
   _ <= _ = False
 
 -- ** Evaluation
@@ -287,6 +292,10 @@ eval x val = case x of
   Elements -> elements val
   Union f g -> union val f g
   EMap f -> evalmap val f
+  LConcat l r -> evalconcat val l r
+  ToList e -> do
+    e' <- eval e val
+    return $ A.Array $ V.fromList [e']
 
 keys :: Value -> EvalRes
 keys (A.Object o) =
@@ -358,6 +367,17 @@ evalmap val f =
   case val of
     A.Array v -> A.Array <$> sequence (V.map (eval f) v)
     v -> Left $ "cannot map on value: " ++ show v
+
+evalconcat :: Value -> Expr -> Expr -> EvalRes
+evalconcat val l r = do
+  l' <- eval l val
+  r' <- eval r val
+  case (l', r') of
+    (A.Array v1, A.Array v2) -> Right $ A.Array $ v1 <> v2
+    (a, b) -> Right $ A.Array $ V.fromList [a,b]
+    -- (_, A.Array _) -> Left "Left hand side of concat is not an Array"
+    -- (A.Array _, _) -> Left "Right hand side of concat is not an Array"
+    -- (_, _) -> Left "concat is not between lists"
 
 -- A Program is what we finally want to have, a function wrapping the filter and returning it:
 -- ```js
@@ -551,9 +571,9 @@ backward t e =
 unify :: ValTy -> ValTy -> [Expr]
 unify = undefined
 
--- Inductive Generation Search without deduction
---
---
+-----------------------------------------------------------------------
+--           Inductive Generation Search without deduction           --
+-----------------------------------------------------------------------
 
 -- hypothesis expression
 data HExpr
@@ -561,6 +581,8 @@ data HExpr
   | HConstruct [(T.Text, HExpr)]
   | HPipe HExpr HExpr
   | HMap HExpr
+  | HConcat HExpr HExpr
+  | HToList HExpr
   | Hole Ty
   deriving (Show, Eq, Ord)
 
@@ -581,6 +603,8 @@ prettyHExpr e =
           T.intercalate ", " $ map (\(k, v) -> k <> ": " <> prettyHExpr v) ps
     (HPipe e1 e2) -> prettyHExpr e1 <> " | " <> prettyHExpr e2
     (HMap arg) -> "map(" <> prettyHExpr arg <> ")"
+    (HConcat a b) -> prettyHExpr a <> " <> " <> prettyHExpr b
+    (HToList a) -> "toList(" <> prettyHExpr a <> ")"
     (Hole t) -> "hole:" <> prettyTy t
 
 hExprToExpr :: HExpr -> Expr
@@ -591,6 +615,9 @@ hExprToExpr h =
       Construct $ map (bimap (Const . A.String) hExprToExpr) exps
     (HPipe exp1 exp2) ->
       Pipe (hExprToExpr exp1) (hExprToExpr exp2)
+    (HConcat exp1 exp2) ->
+      LConcat (hExprToExpr exp1) (hExprToExpr exp2)
+    (HToList exp) -> ToList $ hExprToExpr exp
     (HMap exp) -> EMap $ hExprToExpr exp
     (Hole _) -> error "can't convert an open hypothesis to an expression"
 
@@ -599,6 +626,8 @@ isClosed (HGet _) = True
 isClosed (HConstruct exps) = all isClosed $ map snd exps
 isClosed (HPipe exp1 exp2) = isClosed exp1 && isClosed exp2
 isClosed (HMap exp) = isClosed exp
+isClosed (HConcat exp1 exp2) = isClosed exp1 && isClosed exp2
+isClosed (HToList exp) = isClosed exp
 isClosed (Hole h) = False
 
 indGenSynth :: [JsonExample] -> Maybe Program
@@ -637,11 +666,12 @@ expand :: ValTy -> HExpr -> [HExpr]
 expand t1 h =
   case h of
     HConstruct exps
-      | allHoles exps ->
+      | anyHoles exps ->
         let kys = map fst exps
             -- quadratic on the number of generated hypotheses by inductiveGen
-            allCombinations =
-              mapM ((\(Hole (TVal t)) -> inductiveGen (t1 `tarrow` t)) . snd) exps
+            allCombinations = mapM (go . snd) exps
+            go (Hole (TVal t)) = inductiveGen (t1 `tarrow` t)
+            go x = [x]
          in map (HConstruct . zip kys) allCombinations
     HConstruct exps ->
       let modifiedExps :: [(T.Text, [HExpr])]
@@ -654,6 +684,7 @@ expand t1 h =
       exp2 <- inductiveGen t
       return $ HPipe exp1 exp2
     -- information of t2 is lost !?
+    HPipe _ _ -> []
     -- HPipe e1 e2 -> do
     --   ex1 <- expand t1 e1
     --   ex2 <- expand t2 e2
@@ -664,19 +695,37 @@ expand t1 h =
     --
     HMap e ->
       let (TArray inside) = t1
-      in map HMap (expand inside e)
+       in map HMap (expand inside e)
+
+    HConcat (Hole (TVal lt)) (Hole (TVal rt)) -> do
+      expl <- inductiveGen (t1 `tarrow` lt)
+      expr <- inductiveGen (t1 `tarrow` rt)
+      return $ HConcat expl expr
+
+    HConcat l r -> do
+      expl <- expand t1 l
+      expr <- expand t1 r
+      return $ HConcat expl expr
+ 
+    HToList (Hole (TVal a)) -> do
+      exp <- inductiveGen (t1 `tarrow` a)
+      return $ HToList exp
+    
+    HToList e ->
+       map HToList (expand t1 e)
+
     g@(HGet _) -> pure g
     h -> error $ T.unpack $ prettyHExpr h
   where
-    allHoles :: [(T.Text, HExpr)] -> Bool
-    allHoles = all (isHole . snd)
+    anyHoles :: [(T.Text, HExpr)] -> Bool
+    anyHoles = any (isHole . snd)
 
 -- TODO: Replace pair of ValTy with TArr when generalizing to multiple args ?
 
 -- | from an arrow type, return a stream of hypothesis compatible with those types
 inductiveGen :: Ty -> [HExpr]
 inductiveGen (TVal t1 `TArrow` TVal t2) =
-  getHs ++ mapHs ++ constructHs ++ pipeHs
+  getHs ++ mapHs ++ toListHs ++ concatHs ++ constructHs ++ pipeHs
   where
     -- get hypotheses, note how this generates hypotheses without holes
     getHs =
@@ -686,17 +735,18 @@ inductiveGen (TVal t1 `TArrow` TVal t2) =
           -- and return their gets
           map (HGet . fst) $ filter ((t2 ==) . snd) $ M.toList o
         _ -> []
-    -- construct hypotheses
+    -- A construct hypotheses
+    -- must satisfy every key-type pair from type t2.
     constructHs =
       case t2 of
         TObject o ->
           [HConstruct $ map (second $ Hole . TVal) $ M.toList o]
         _ -> []
     pipeHs =
-      -- one Pipe for each unique type in first expr
-      -- the type of second expr in HPipe must be t2
-      -- the type of first expr can be any time derived from, i.e. there's a transformation
-      -- t1 -> a
+      -- if the results is t2, then it can be produced
+      -- by any pipe expression of the form
+      -- a | (a -> t2)
+      -- a's is evaluated against t1 or the outer argument
       let types = case t1 of
             TObject o -> nub $ M.elems o
             _ -> []
@@ -704,10 +754,20 @@ inductiveGen (TVal t1 `TArrow` TVal t2) =
        in do
             ta <- types
             return $ HPipe (Hole $ TVal ta) (Hole $ ta `tarrow` t2)
-    -- HPipe <$> holes <*> [Hole $ TVal t2]
     mapHs =
       case (t1, t2) of
         (TArray a, TArray b) ->
           [HMap (Hole $ TVal a `TArrow` TVal b)]
         _ -> []
+    -- if the result is an array, then it can be produced by concatenating
+    -- two arrays of the same type
+    concatHs =
+      case t2 of
+        TArray a ->
+          [HConcat (Hole $ TVal t2) (Hole $ TVal t2)]
+        _ -> []
 
+    toListHs =
+      case t2 of
+        TArray t -> [HToList (Hole $ TVal t)]
+        _ -> []
