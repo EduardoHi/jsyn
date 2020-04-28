@@ -3,7 +3,6 @@
 
 module Jsyn where
 
-
 import Control.Monad
 import qualified Data.Aeson as A
 import Data.Bifunctor (bimap, first, second)
@@ -386,13 +385,11 @@ flatten val e = do
   e' <- eval e val
   case e' of
     A.Array as ->
-      let
-        vs :: Either String (V.Vector Value)
-        vs = V.concatMap id <$> V.mapM go as
-        go (A.Array v) = Right v
-        go x = Left $ show x <> " can't be flatteneed since it is not an array of arrays"
-      in
-        second A.Array vs
+      let vs :: Either String (V.Vector Value)
+          vs = V.concatMap id <$> V.mapM go as
+          go (A.Array v) = Right v
+          go x = Left $ show x <> " can't be flatteneed since it is not an array of arrays"
+       in second A.Array vs
     _ -> Left $ show e' <> "can't be flattened since it is not an array"
 
 -- A Program is what we finally want to have, a function wrapping the filter and returning it:
@@ -445,10 +442,13 @@ toJSInline s x =
       where
         f' = toJSInline s f
         g' = toJSInline s g
-    (Pipe f g) -> f' <> "(" <> g' <> ")"
+    (Pipe f g) -> toJSInline f' g
       where
         f' = toJSInline s f
-        g' = toJSInline s g
+    (EMap e) -> s <> ".map( x => { return " <> toJSInline "x" e <> "; })"
+    (LConcat l r) -> toJSInline s l <> " + " <> toJSInline s r
+    (ToList e) -> "[" <> toJSInline s e <> "]"
+    (Flatten e) -> "(" <> toJSInline s e <> ").flat()"
 
 -- A valid string for a key does not have spaces or double quotes
 isValidAsKey st = not $ T.any (\x -> x == ' ' || x == '"') st
@@ -660,7 +660,6 @@ hSize (HToList exp) = 1 + hSize exp
 hSize (HFlatten exp) = 1 + hSize exp
 hSize (Hole h) = 1
 
-
 indGenSynth :: [JsonExample] -> Maybe Program
 indGenSynth examples =
   -- search a program of the form:
@@ -714,43 +713,33 @@ expand t1 h =
       exp1 <- inductiveGen (t1 `tarrow` th1)
       exp2 <- inductiveGen t
       return $ HPipe exp1 exp2 th1
-
     HPipe e1 e2 interT -> do
       ex1 <- expand t1 e1
       ex2 <- expand interT e2
       return $ HPipe ex1 ex2 interT
-
     HMap (Hole (a `TArrow` b)) t -> do
       exp <- inductiveGen (a `TArrow` b)
       return $ HMap exp t
-    --
     HMap e t ->
       map (flip HMap t) (expand t e)
-
     HConcat (Hole (TVal lt)) (Hole (TVal rt)) -> do
       expl <- inductiveGen (t1 `tarrow` lt)
       expr <- inductiveGen (t1 `tarrow` rt)
       return $ HConcat expl expr
-
     HConcat l r -> do
       expl <- expand t1 l
       expr <- expand t1 r
       return $ HConcat expl expr
- 
     HToList (Hole (TVal a)) -> do
       exp <- inductiveGen (t1 `tarrow` a)
       return $ HToList exp
-    
     HToList e ->
-       map HToList (expand t1 e)
-
+      map HToList (expand t1 e)
     HFlatten (Hole (TVal a)) -> do
       exp <- inductiveGen (t1 `tarrow` a)
       return $ HFlatten exp
-
     HFlatten e ->
-       map HFlatten (expand t1 e)
-
+      map HFlatten (expand t1 e)
     g@(HGet _) -> pure g
     h -> error $ T.unpack $ prettyHExpr h
   where
@@ -803,12 +792,10 @@ inductiveGen (TVal t1 `TArrow` TVal t2) =
         TArray a ->
           [HConcat (Hole $ TVal t2) (Hole $ TVal t2)]
         _ -> []
-
     toListHs =
       case t2 of
         TArray t -> [HToList (Hole $ TVal t)]
         _ -> []
-
     -- if t2 is an array, it can be produced by flattening
     -- an array of t2s
     flattenHs =
