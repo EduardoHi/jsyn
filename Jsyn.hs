@@ -1,18 +1,17 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveAnyClass #-}
 
 module Jsyn where
 
 import Control.Monad
+import Control.DeepSeq (NFData)
 import qualified Data.Aeson as A
 import Data.Bifunctor (bimap, first, second)
 import qualified Data.ByteString.Lazy.Char8 as C
 import Data.Either
 import qualified Data.HashMap.Strict as M
 import Data.List (find, nub, nubBy, partition, sort, sortOn)
-import Data.Maybe
-import Data.Scientific
-import Data.Semigroup
 import qualified Data.Text as T
 import Data.Text.Encoding as E
 import qualified Data.Vector as V
@@ -29,7 +28,7 @@ data JsonExample = JsonExample
   { input :: A.Value,
     output :: A.Value
   }
-  deriving (Generic, Show)
+  deriving (Generic, Show, NFData)
 
 instance A.ToJSON JsonExample where
   toEncoding = A.genericToEncoding A.defaultOptions

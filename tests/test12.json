@@ -1,23 +1,23 @@
 [
   {
     "input": {
-      "name": "Eduardo",
+      "name": "Alice",
       "number1": "(800)645-8397",
       "number2": "(907)586-7252"
     },
     "output": {
-      "name": "Eduardo",
+      "name": "Alice",
       "numbers": ["(800)645-8397", "(907)586-7252"]
     }
   },
   {
     "input": {
-      "name": "Spencer",
+      "name": "Bob",
       "number1": "(918)781-4600",
       "number2": "(918)781-4694"
     },
     "output": {
-      "name": "Spencer",
+      "name": "Bob",
       "numbers": ["(918)781-4600", "(918)781-4694"]
     }
   }
