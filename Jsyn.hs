@@ -7,11 +7,11 @@ module Jsyn where
 import Control.Monad
 import Control.DeepSeq (NFData)
 import qualified Data.Aeson as A
-import Data.Bifunctor (bimap, first, second)
+import Data.Bifunctor (bimap, second)
 import qualified Data.ByteString.Lazy.Char8 as C
 import Data.Either
 import qualified Data.HashMap.Strict as M
-import Data.List (find, nub, nubBy, partition, sort, sortOn)
+import Data.List (find, nub, partition)
 import qualified Data.Text as T
 import Data.Text.Encoding as E
 import qualified Data.Vector as V
@@ -111,7 +111,7 @@ prettyTy t = case t of
   TVal a -> prettyValTy a
 
 prettyValTy :: ValTy -> T.Text
-prettyValTy v = case v of
+prettyValTy val = case val of
   TValue -> "Value"
   TObject o -> "{" <> inside <> "}"
     where
@@ -404,8 +404,8 @@ newtype Program = Program {programBody :: Expr}
 toJS :: Program -> T.Text
 toJS Program {programBody = body} =
   T.unlines
-    [ "function program(obj) {",
-      "    return " <> toJSInline "obj" body,
+    [ "function program(x) {",
+      "    return " <> toJSInline "x" body,
       "}"
     ]
 
@@ -450,6 +450,7 @@ toJSInline s x =
     (Flatten e) -> "(" <> toJSInline s e <> ").flat()"
 
 -- A valid string for a key does not have spaces or double quotes
+isValidAsKey :: T.Text -> Bool
 isValidAsKey st = not $ T.any (\x -> x == ' ' || x == '"') st
 
 consistent :: [JsonExample] -> Expr -> Bool
@@ -458,7 +459,7 @@ consistent examples expr =
   where
     go JsonExample {input = i, output = o} =
       case eval expr i of
-        Left s -> False -- Left is an error during evaluation
+        Left _ -> False -- Left is an error during evaluation
         Right r -> r == o
 
 -----------------------------------------------------------------------
@@ -477,6 +478,7 @@ data HExpr
   | Hole Ty
   deriving (Show, Eq, Ord)
 
+isHole :: HExpr -> Bool
 isHole (Hole _) = True
 isHole _ = False
 
@@ -503,36 +505,36 @@ hExprToExpr :: HExpr -> Expr
 hExprToExpr h =
   case h of
     (HGet t) -> Get . Const . A.String $ t
-    (HConstruct exps) ->
-      Construct $ map (bimap (Const . A.String) hExprToExpr) exps
-    (HPipe exp1 exp2 _) ->
-      Pipe (hExprToExpr exp1) (hExprToExpr exp2)
-    (HConcat exp1 exp2) ->
-      LConcat (hExprToExpr exp1) (hExprToExpr exp2)
-    (HToList exp) -> ToList $ hExprToExpr exp
-    (HFlatten exp) -> Flatten $ hExprToExpr exp
-    (HMap exp _) -> EMap $ hExprToExpr exp
+    (HConstruct es) ->
+      Construct $ map (bimap (Const . A.String) hExprToExpr) es
+    (HPipe e1 e2 _) ->
+      Pipe (hExprToExpr e1) (hExprToExpr e2)
+    (HConcat e1 e2) ->
+      LConcat (hExprToExpr e1) (hExprToExpr e2)
+    (HToList e) -> ToList $ hExprToExpr e
+    (HFlatten e) -> Flatten $ hExprToExpr e
+    (HMap e _) -> EMap $ hExprToExpr e
     (Hole _) -> error "can't convert an open hypothesis to an expression"
 
 isClosed :: HExpr -> Bool
 isClosed (HGet _) = True
-isClosed (HConstruct exps) = all isClosed $ map snd exps
-isClosed (HPipe exp1 exp2 _) = isClosed exp1 && isClosed exp2
-isClosed (HMap exp _) = isClosed exp
-isClosed (HConcat exp1 exp2) = isClosed exp1 && isClosed exp2
-isClosed (HToList exp) = isClosed exp
-isClosed (HFlatten exp) = isClosed exp
-isClosed (Hole h) = False
+isClosed (HConstruct es) = all isClosed $ map snd es
+isClosed (HPipe e1 e2 _) = isClosed e1 && isClosed e2
+isClosed (HMap e _) = isClosed e
+isClosed (HConcat e1 e2) = isClosed e1 && isClosed e2
+isClosed (HToList e) = isClosed e
+isClosed (HFlatten e) = isClosed e
+isClosed (Hole _) = False
 
 hSize :: HExpr -> Int
 hSize (HGet _) = 1
-hSize (HConstruct exps) = 1 + sum (map (hSize . snd) exps)
-hSize (HPipe exp1 exp2 _) = hSize exp1 + hSize exp2
-hSize (HMap exp _) = 1 + hSize exp
-hSize (HConcat exp1 exp2) = 1 + hSize exp1 + hSize exp2
-hSize (HToList exp) = 1 + hSize exp
-hSize (HFlatten exp) = 1 + hSize exp
-hSize (Hole h) = 1
+hSize (HConstruct es) = 1 + sum (map (hSize . snd) es)
+hSize (HPipe e1 e2 _) = hSize e1 + hSize e2
+hSize (HMap e _) = 1 + hSize e
+hSize (HConcat e1 e2) = 1 + hSize e1 + hSize e2
+hSize (HToList e) = 1 + hSize e
+hSize (HFlatten e) = 1 + hSize e
+hSize (Hole _) = 1
 
 indGenSynth :: [JsonExample] -> Maybe Program
 indGenSynth examples =
@@ -555,10 +557,10 @@ indGenSearch t1 examples hs =
         Just hConsistent -> [Just . Program . hExprToExpr $ hConsistent]
         Nothing -> case openhs of
           [] -> [Nothing]
-          hs' -> programs
+          openhs' -> programs
             where
               expandedHypotheses :: [HExpr]
-              expandedHypotheses = concatMap (expand t1) openhs
+              expandedHypotheses = concatMap (expand t1) openhs'
               programs :: [Maybe Program]
               programs = indGenSearch t1 examples expandedHypotheses
 
@@ -567,8 +569,8 @@ indGenSearch t1 examples hs =
 -- if the toplevel node doesn't have holes, then it recursive traverse it
 -- and fills them.
 expand :: ValTy -> HExpr -> [HExpr]
-expand t1 h =
-  case h of
+expand t1 hole =
+  case hole of
     HConstruct exps
       | anyHoles exps ->
         let kys = map fst exps
@@ -592,26 +594,26 @@ expand t1 h =
       ex2 <- expand interT e2
       return $ HPipe ex1 ex2 interT
     HMap (Hole (a `TArrow` b)) t -> do
-      exp <- inductiveGen (a `TArrow` b)
-      return $ HMap exp t
+      e <- inductiveGen (a `TArrow` b)
+      return $ HMap e t
     HMap e t ->
       map (flip HMap t) (expand t e)
     HConcat (Hole (TVal lt)) (Hole (TVal rt)) -> do
-      expl <- inductiveGen (t1 `tarrow` lt)
-      expr <- inductiveGen (t1 `tarrow` rt)
-      return $ HConcat expl expr
+      el <- inductiveGen (t1 `tarrow` lt)
+      er <- inductiveGen (t1 `tarrow` rt)
+      return $ HConcat el er
     HConcat l r -> do
-      expl <- expand t1 l
-      expr <- expand t1 r
-      return $ HConcat expl expr
+      el <- expand t1 l
+      er <- expand t1 r
+      return $ HConcat el er
     HToList (Hole (TVal a)) -> do
-      exp <- inductiveGen (t1 `tarrow` a)
-      return $ HToList exp
+      e <- inductiveGen (t1 `tarrow` a)
+      return $ HToList e
     HToList e ->
       map HToList (expand t1 e)
     HFlatten (Hole (TVal a)) -> do
-      exp <- inductiveGen (t1 `tarrow` a)
-      return $ HFlatten exp
+      e <- inductiveGen (t1 `tarrow` a)
+      return $ HFlatten e
     HFlatten e ->
       map HFlatten (expand t1 e)
     g@(HGet _) -> pure g
@@ -650,7 +652,6 @@ inductiveGen (TVal t1 `TArrow` TVal t2) =
       let types = case t1 of
             TObject o -> nub $ M.elems o
             _ -> []
-          holes = map (Hole . TVal) types
        in do
             ta <- types
             return $ HPipe (Hole $ TVal ta) (Hole $ ta `tarrow` t2) ta
@@ -663,7 +664,7 @@ inductiveGen (TVal t1 `TArrow` TVal t2) =
     -- two arrays of the same type
     concatHs =
       case t2 of
-        TArray a ->
+        TArray _ ->
           [HConcat (Hole $ TVal t2) (Hole $ TVal t2)]
         _ -> []
     toListHs =

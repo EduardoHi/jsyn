@@ -289,3 +289,4 @@ main =
       testSynthetizer "tests/test11.json"
       testSynthetizer "tests/test12.json"
       testSynthetizer "tests/test13.json"
+      testSynthetizer "tests/test15.json"
