@@ -40,3 +40,29 @@ function program(xs) {
 
 For a more detailed explanation of what it is and how it works,
 read the pdf `hidalgo20-report.pdf`.
+
+to run the program:
+
+```shell
+$ cabal run jsyn -- <example file>
+```
+
+for example:
+
+```shell
+$ cabal run jsyn -- tests/test8.json
+```
+
+other commands:
+
+```shell
+$ cabal test
+```
+
+To run all tests, and:
+
+```shell
+$ cabal bench
+```
+
+to run microbenchmarks
