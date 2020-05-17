@@ -1,11 +1,11 @@
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE DeriveAnyClass #-}
 
 module Jsyn where
 
-import Control.Monad
 import Control.DeepSeq (NFData)
+import Control.Monad
 import qualified Data.Aeson as A
 import Data.Bifunctor (bimap, second)
 import qualified Data.ByteString.Lazy.Char8 as C
@@ -167,7 +167,7 @@ data ValTy
 -- https://flow.org/en/docs/types/unions/
 -- union of object types needs a single property to differentiate between both
 --
--- intersection types refer to a type that is type a *and* type b 
+-- intersection types refer to a type that is type a *and* type b
 -- while union refers to a type that is type a *xor* type b
 
 typeUnion :: ValTy -> ValTy -> ValTy
@@ -545,13 +545,13 @@ hSize (Hole _) = 1
 
 indGenSynth :: [JsonExample] -> Maybe Program
 indGenSynth examples =
-  -- search a program of the form:
+  -- synthesize a program of the form:
   -- \x . e
   -- x : t1, e : t2
   msum $ indGenSearch t1 examples hypotheses
   where
-    t@(TVal t1 `TArrow` _) = inferVTexamples examples
-    hypotheses = inductiveGen t
+    (TVal t1 `TArrow` TVal t2) = inferVTexamples examples
+    hypotheses = inductiveGen t1 t2
 
 indGenSearch :: ValTy -> [JsonExample] -> [HExpr] -> [Maybe Program]
 indGenSearch t1 examples hs =
@@ -571,11 +571,15 @@ indGenSearch t1 examples hs =
               programs :: [Maybe Program]
               programs = indGenSearch t1 examples expandedHypotheses
 
+-- | for now, the context is a single value (the current argument in scope) but that can be
+-- extended eventually
+type Context = ValTy
+
 -- given an open hypothesis, that is a node with holes in its leafs
 -- returns all the possible fillings of that node.
 -- if the toplevel node doesn't have holes, then it recursive traverse it
 -- and fills them.
-expand :: ValTy -> HExpr -> [HExpr]
+expand :: Context -> HExpr -> [HExpr]
 expand t1 hole =
   case hole of
     HConstruct exps
@@ -583,7 +587,7 @@ expand t1 hole =
         let kys = map fst exps
             -- quadratic on the number of generated hypotheses by inductiveGen
             allCombinations = mapM (go . snd) exps
-            go (Hole (TVal t)) = inductiveGen (t1 `tarrow` t)
+            go (Hole (TVal t)) = inductiveGen t1 t
             go x = [x]
          in map (HConstruct . zip kys) allCombinations
     HConstruct exps ->
@@ -592,34 +596,34 @@ expand t1 hole =
           go :: (T.Text, [HExpr]) -> [(T.Text, HExpr)]
           go (k, hes) = hes >>= (\he -> pure (k, he))
        in map HConstruct $ mapM go modifiedExps
-    HPipe (Hole (TVal th1)) (Hole t) _ -> do
-      exp1 <- inductiveGen (t1 `tarrow` th1)
-      exp2 <- inductiveGen t
+    HPipe (Hole (TVal th1)) (Hole (_ `TArrow` TVal t)) _ -> do
+      exp1 <- inductiveGen t1 th1
+      exp2 <- inductiveGen th1 t
       return $ HPipe exp1 exp2 th1
     HPipe e1 e2 interT -> do
       ex1 <- expand t1 e1
       ex2 <- expand interT e2
       return $ HPipe ex1 ex2 interT
-    HMap (Hole (a `TArrow` b)) t -> do
-      e <- inductiveGen (a `TArrow` b)
+    HMap (Hole (TVal a `TArrow` TVal b)) t -> do
+      e <- inductiveGen a b
       return $ HMap e t
     HMap e t ->
       map (flip HMap t) (expand t e)
     HConcat (Hole (TVal lt)) (Hole (TVal rt)) -> do
-      el <- inductiveGen (t1 `tarrow` lt)
-      er <- inductiveGen (t1 `tarrow` rt)
+      el <- inductiveGen t1 lt
+      er <- inductiveGen t1 rt
       return $ HConcat el er
     HConcat l r -> do
       el <- expand t1 l
       er <- expand t1 r
       return $ HConcat el er
     HToList (Hole (TVal a)) -> do
-      e <- inductiveGen (t1 `tarrow` a)
+      e <- inductiveGen t1 a
       return $ HToList e
     HToList e ->
       map HToList (expand t1 e)
     HFlatten (Hole (TVal a)) -> do
-      e <- inductiveGen (t1 `tarrow` a)
+      e <- inductiveGen t1 a
       return $ HFlatten e
     HFlatten e ->
       map HFlatten (expand t1 e)
@@ -629,58 +633,58 @@ expand t1 hole =
     anyHoles :: [(T.Text, HExpr)] -> Bool
     anyHoles = any (isHole . snd)
 
--- TODO: Replace pair of ValTy with TArr when generalizing to multiple args ?
-
 -- | from an arrow type, return a stream of hypothesis compatible with those types
-inductiveGen :: Ty -> [HExpr]
-inductiveGen (TVal t1 `TArrow` TVal t2) =
+-- | given a context and a type, return a stream of hypotheses compatible with
+-- that type, i.e. hypotheses that can 'fill' such hole.
+inductiveGen :: Context -> ValTy -> [HExpr]
+inductiveGen ctx t =
   getHs ++ mapHs ++ toListHs ++ flattenHs ++ concatHs ++ constructHs ++ pipeHs
   where
     -- get hypotheses, note how this generates hypotheses without holes
     getHs =
-      case t1 of
+      case ctx of
         TObject o ->
-          -- from all the fields of t1 filter the ones that are equal to t2
+          -- from all the fields of cxt, filter the ones that are equal to t
           -- and return their gets
-          map (HGet . fst) $ filter ((t2 ==) . snd) $ M.toList o
+          map (HGet . fst) $ filter ((t ==) . snd) $ M.toList o
         _ -> []
-    -- A construct hypotheses
-    -- must satisfy every key-type pair from type t2.
+    -- A construct hypothesis
+    -- must satisfy every key-type pair from type t.
     constructHs =
-      case t2 of
+      case t of
         TObject o ->
           [HConstruct $ map (second $ Hole . TVal) $ M.toList o]
         _ -> []
     pipeHs =
-      -- if the results is t2, then it can be produced
+      -- if the results is t, then it can be produced
       -- by any pipe expression of the form
-      -- a | (a -> t2)
-      -- a's is evaluated against t1 or the outer argument
-      let types = case t1 of
+      -- a | (a -> t)
+      -- a's is evaluated against the cxt
+      let types = case ctx of
             TObject o -> nub $ M.elems o
             _ -> []
        in do
             ta <- types
-            return $ HPipe (Hole $ TVal ta) (Hole $ ta `tarrow` t2) ta
+            return $ HPipe (Hole $ TVal ta) (Hole $ ta `tarrow` t) ta
     mapHs =
-      case (t1, t2) of
+      case (ctx, t) of
         (TArray a, TArray b) ->
           [HMap (Hole $ TVal a `TArrow` TVal b) a]
         _ -> []
     -- if the result is an array, then it can be produced by concatenating
     -- two arrays of the same type
     concatHs =
-      case t2 of
+      case t of
         TArray _ ->
-          [HConcat (Hole $ TVal t2) (Hole $ TVal t2)]
+          [HConcat (Hole $ TVal t) (Hole $ TVal t)]
         _ -> []
     toListHs =
-      case t2 of
-        TArray t -> [HToList (Hole $ TVal t)]
+      case t of
+        TArray a -> [HToList (Hole $ TVal a)]
         _ -> []
-    -- if t2 is an array, it can be produced by flattening
-    -- an array of t2s
+    -- if t is an array, it can be produced by flattening
+    -- an array of ts
     flattenHs =
-      case t2 of
-        (TArray _) -> [HFlatten (Hole $ TVal (TArray t2))]
+      case t of
+        (TArray _) -> [HFlatten (Hole $ TVal (TArray t))]
         _ -> []
