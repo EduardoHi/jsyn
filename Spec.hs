@@ -6,15 +6,13 @@ module Main where
 
 import Control.Monad
 import qualified Data.Aeson as A
-import qualified Data.ByteString.Lazy.Char8 as C
-import Data.Either
+
+
 import qualified Data.HashMap.Strict as M
-import Data.Maybe
-import Data.Semigroup
-import qualified Data.Text as T
+
 import Jsyn
 import Test.Hspec
-import Text.Printf
+
 
 -- | cstring little helper to build Constant Strings in the DSL
 cstring = Const . A.String
@@ -262,12 +260,13 @@ testSynthetizer :: String -> SpecWith ()
 testSynthetizer filename = do
   examples <- runIO $ readJsonExamples filename
   describe ("synthetizes " <> filename) $ do
-    let prg = indGenSynth examples
+    res <- runIO $ runSynth (5* 10^6) examples
 
-    it "finds a program" $ prg `shouldSatisfy` isJust
+    it "doesn't time out" $ res `shouldNotBe` SynthTimeout
+    it "doesn't fail to find a program" $ res `shouldNotBe` ProgramNotFound
 
     it "is consistent with examples" $ do
-      let (Just Program {programBody = expr}) = prg
+      let (SynthRes Program {programBody = expr}) = res
       expr `shouldSatisfy` consistent examples
 
 main :: IO ()
@@ -289,4 +288,6 @@ main =
       testSynthetizer "tests/test11.json"
       testSynthetizer "tests/test12.json"
       testSynthetizer "tests/test13.json"
+      testSynthetizer "tests/test14.json"
       testSynthetizer "tests/test15.json"
+      testSynthetizer "tests/test16.json"

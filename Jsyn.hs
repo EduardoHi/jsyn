@@ -6,10 +6,13 @@ module Jsyn where
 
 import Control.DeepSeq (NFData)
 import Control.Monad
+import Control.Exception (evaluate)
+import System.Timeout (timeout)
 import qualified Data.Aeson as A
 import Data.Bifunctor (bimap, second)
 import qualified Data.ByteString.Lazy.Char8 as C
 import Data.Either
+import Data.Maybe
 import qualified Data.HashMap.Strict as M
 import Data.List (find, nub, partition)
 import qualified Data.Text as T
@@ -542,6 +545,22 @@ hSize (HConcat e1 e2) = 1 + hSize e1 + hSize e2
 hSize (HToList e) = 1 + hSize e
 hSize (HFlatten e) = 1 + hSize e
 hSize (Hole _) = 1
+
+data SynthRes
+  = SynthRes Program -- the synthetized program
+  | ProgramNotFound -- search exhausted all possibilities and didn't found a matching program
+  | SynthTimeout    -- search spent more than time limit
+  deriving (Show, Eq)
+
+-- | timeLimit in microseconds (10^-6)
+runSynth :: Int -> [JsonExample] -> IO SynthRes
+runSynth timeLimit examples =
+   fromMaybe SynthTimeout <$> timeout timeLimit (evaluate go)
+   where
+     go = case indGenSynth examples of
+            Just p -> SynthRes p
+            Nothing -> ProgramNotFound
+  
 
 indGenSynth :: [JsonExample] -> Maybe Program
 indGenSynth examples =
