@@ -161,18 +161,25 @@ data ValTy
 -- of their values. For the rest of possible value types, the intersection with themselves is
 -- reflexive and with the rest is the ValTy TValue.
 
-intersect :: ValTy -> ValTy -> ValTy
-intersect a b =
+-- https://flow.org/en/docs/types/intersections/
+-- intersection of object types `merges` fields in both objects
+--
+-- https://flow.org/en/docs/types/unions/
+-- union of object types needs a single property to differentiate between both
+--
+-- intersection types refer to a type that is type a *and* type b 
+-- while union refers to a type that is type a *xor* type b
+
+typeUnion :: ValTy -> ValTy -> ValTy
+typeUnion a b =
   case (a, b) of
-    (TObject ta, TObject tb) -> TObject $ M.intersectionWith intersect ta tb
-    (TArray ta, TArray tb) -> TArray $ ta `intersect` tb
+    (TObject ta, TObject tb) -> TObject $ M.intersectionWith typeUnion ta tb
+    (TArray ta, TArray tb) -> TArray $ ta `typeUnion` tb
     (TString, TString) -> TString
     (TNumber, TNumber) -> TNumber
     (TBool, TBool) -> TBool
     (TNull, TNull) -> TNull
     _ -> TValue
-
--- intersect can also be thought as the greatest common ancestor in the subtyping tree.
 
 -- The type of a value naturally follows from it's structure:
 
@@ -180,7 +187,7 @@ inferArr :: V.Vector ValTy -> ValTy
 inferArr v = case V.length v of
   0 -> TValue
   1 -> V.head v
-  _ -> V.foldl1' intersect v
+  _ -> V.foldl1' typeUnion v
 
 inferVT :: Value -> ValTy
 inferVT x =
