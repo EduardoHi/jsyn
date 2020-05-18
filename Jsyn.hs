@@ -243,6 +243,7 @@ data Expr
     Id
   | Keys
   | Elements
+  | Flatten
   | -- /2 arity functions
     Get Expr
   | Construct [(Expr, Expr)]
@@ -252,7 +253,6 @@ data Expr
   | EMap Expr
   | LConcat Expr Expr
   | ToList Expr
-  | Flatten Expr
   deriving (Show, Eq)
 
 fromConstString :: Expr -> T.Text
@@ -262,20 +262,6 @@ fromConstString _ = error "not a Const String"
 isConstString :: Expr -> Bool
 isConstString (Const (A.String _)) = True
 isConstString _ = False
-
-instance Ord Expr where
-  (Const _) <= Id = True
-  Id <= Keys = True
-  Keys <= Elements = True
-  Elements <= (Get _) = True
-  (Get _) <= (Construct _) = True
-  (Construct _) <= (Union _ _) = True
-  (Union _ _) <= (Pipe _ _) = True
-  (Pipe _ _) <= (EMap _) = True
-  (EMap _) <= (LConcat _ _) = True
-  (LConcat _ _) <= (ToList _) = True
-  (ToList _) <= (Flatten _) = True
-  _ <= _ = False
 
 -- ** Evaluation
 
@@ -306,7 +292,7 @@ eval x val = case x of
   ToList e -> do
     e' <- eval e val
     return $ A.Array $ V.fromList [e']
-  Flatten e -> flatten val e
+  Flatten -> flatten val
 
 keys :: Value -> EvalRes
 keys (A.Object o) =
@@ -389,17 +375,16 @@ evalconcat val l r = do
     (A.Array _, _) -> Left "Right hand side of concat is not an Array"
     (_, _) -> Left "concat is not between lists"
 
-flatten :: Value -> Expr -> EvalRes
-flatten val e = do
-  e' <- eval e val
-  case e' of
+flatten :: Value -> EvalRes
+flatten val =
+  case val of
     A.Array as ->
       let vs :: Either String (V.Vector Value)
           vs = V.concatMap id <$> V.mapM go as
           go (A.Array v) = Right v
           go x = Left $ show x <> " can't be flatteneed since it is not an array of arrays"
        in second A.Array vs
-    _ -> Left $ show e' <> "can't be flattened since it is not an array"
+    _ -> Left $ show val <> "can't be flattened since it is not an array"
 
 -- A Program is what we finally want to have, a function wrapping the filter and returning it:
 -- ```js
@@ -457,7 +442,7 @@ toJSInline s x =
     (EMap e) -> s <> ".map( x => { return " <> toJSInline "x" e <> "; })"
     (LConcat l r) -> toJSInline s l <> " + " <> toJSInline s r
     (ToList e) -> "[" <> toJSInline s e <> "]"
-    (Flatten e) -> "(" <> toJSInline s e <> ").flat()"
+    Flatten -> "(" <> s <> ").flat()"
 
 -- A valid string for a key does not have spaces or double quotes
 isValidAsKey :: T.Text -> Bool
@@ -484,7 +469,7 @@ data HExpr
   | HMap HExpr ValTy
   | HConcat HExpr HExpr
   | HToList HExpr
-  | HFlatten HExpr
+  | HFlatten
   | Hole Ty
   deriving (Show, Eq, Ord)
 
@@ -504,11 +489,11 @@ prettyHExpr e =
       where
         inside =
           T.intercalate ", " $ map (\(k, v) -> k <> ": " <> prettyHExpr v) ps
-    (HPipe e1 e2 _) -> prettyHExpr e1 <> " | " <> prettyHExpr e2
+    (HPipe e1 e2 _) -> prettyHExpr e1 <> " |> " <> prettyHExpr e2
     (HMap arg _) -> "map(" <> prettyHExpr arg <> ")"
     (HConcat a b) -> prettyHExpr a <> " <> " <> prettyHExpr b
     (HToList a) -> "toList(" <> prettyHExpr a <> ")"
-    (HFlatten a) -> "flatten(" <> prettyHExpr a <> ")"
+    HFlatten -> "flatten"
     (Hole t) -> "hole:" <> prettyTy t
 
 hExprToExpr :: HExpr -> Expr
@@ -522,7 +507,7 @@ hExprToExpr h =
     (HConcat e1 e2) ->
       LConcat (hExprToExpr e1) (hExprToExpr e2)
     (HToList e) -> ToList $ hExprToExpr e
-    (HFlatten e) -> Flatten $ hExprToExpr e
+    HFlatten -> Flatten
     (HMap e _) -> EMap $ hExprToExpr e
     (Hole _) -> error "can't convert an open hypothesis to an expression"
 
@@ -533,7 +518,7 @@ isClosed (HPipe e1 e2 _) = isClosed e1 && isClosed e2
 isClosed (HMap e _) = isClosed e
 isClosed (HConcat e1 e2) = isClosed e1 && isClosed e2
 isClosed (HToList e) = isClosed e
-isClosed (HFlatten e) = isClosed e
+isClosed HFlatten = True
 isClosed (Hole _) = False
 
 hSize :: HExpr -> Int
@@ -543,7 +528,7 @@ hSize (HPipe e1 e2 _) = hSize e1 + hSize e2
 hSize (HMap e _) = 1 + hSize e
 hSize (HConcat e1 e2) = 1 + hSize e1 + hSize e2
 hSize (HToList e) = 1 + hSize e
-hSize (HFlatten e) = 1 + hSize e
+hSize HFlatten = 1
 hSize (Hole _) = 1
 
 data SynthRes
@@ -641,13 +626,10 @@ expand t1 hole =
       return $ HToList e
     HToList e ->
       map HToList (expand t1 e)
-    HFlatten (Hole (TVal a)) -> do
-      e <- inductiveGen t1 a
-      return $ HFlatten e
-    HFlatten e ->
-      map HFlatten (expand t1 e)
+    HFlatten -> pure HFlatten
     g@(HGet _) -> pure g
-    h -> error $ T.unpack $ prettyHExpr h
+    Hole (TVal t) -> inductiveGen t1 t
+    h -> error $ (T.unpack $ prettyHExpr h) <> " " <> (show h)
   where
     anyHoles :: [(T.Text, HExpr)] -> Bool
     anyHoles = any (isHole . snd)
@@ -705,5 +687,7 @@ inductiveGen ctx t =
     -- an array of ts
     flattenHs =
       case t of
-        (TArray _) -> [HFlatten (Hole $ TVal (TArray t))]
+        (TArray _) ->
+          let t' = TArray t 
+          in [HFlatten, HPipe (Hole $ TVal t') HFlatten t']
         _ -> []
