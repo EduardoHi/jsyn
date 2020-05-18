@@ -5,20 +5,20 @@
 module Jsyn where
 
 import Control.DeepSeq (NFData)
-import Control.Monad
 import Control.Exception (evaluate)
-import System.Timeout (timeout)
+import Control.Monad
 import qualified Data.Aeson as A
 import Data.Bifunctor (bimap, second)
 import qualified Data.ByteString.Lazy.Char8 as C
 import Data.Either
-import Data.Maybe
 import qualified Data.HashMap.Strict as M
 import Data.List (find, nub, partition)
+import Data.Maybe
 import qualified Data.Text as T
 import Data.Text.Encoding as E
 import qualified Data.Vector as V
 import GHC.Generics
+import System.Timeout (timeout)
 
 -- Since jsyn is a tool for Programming by Example,
 -- we need to represent an example. An JsonExample is a pair of
@@ -244,15 +244,15 @@ data Expr
   | Keys
   | Elements
   | Flatten
+  | ToList
   | -- /2 arity functions
     Get Expr
+  | EMap Expr
   | Construct [(Expr, Expr)]
   | -- /3 arity functions
     Union Expr Expr
   | Pipe Expr Expr
-  | EMap Expr
   | LConcat Expr Expr
-  | ToList Expr
   deriving (Show, Eq)
 
 fromConstString :: Expr -> T.Text
@@ -289,9 +289,7 @@ eval x val = case x of
   Union f g -> union val f g
   EMap f -> evalmap val f
   LConcat l r -> evalconcat val l r
-  ToList e -> do
-    e' <- eval e val
-    return $ A.Array $ V.fromList [e']
+  ToList -> return $ A.Array $ V.singleton val
   Flatten -> flatten val
 
 keys :: Value -> EvalRes
@@ -441,7 +439,7 @@ toJSInline s x =
         f' = toJSInline s f
     (EMap e) -> s <> ".map( x => { return " <> toJSInline "x" e <> "; })"
     (LConcat l r) -> toJSInline s l <> " + " <> toJSInline s r
-    (ToList e) -> "[" <> toJSInline s e <> "]"
+    ToList -> "[" <> s <> "]"
     Flatten -> "(" <> s <> ").flat()"
 
 -- A valid string for a key does not have spaces or double quotes
@@ -468,7 +466,7 @@ data HExpr
   | HPipe HExpr HExpr ValTy
   | HMap HExpr ValTy
   | HConcat HExpr HExpr
-  | HToList HExpr
+  | HToList
   | HFlatten
   | Hole Ty
   deriving (Show, Eq, Ord)
@@ -492,7 +490,7 @@ prettyHExpr e =
     (HPipe e1 e2 _) -> prettyHExpr e1 <> " |> " <> prettyHExpr e2
     (HMap arg _) -> "map(" <> prettyHExpr arg <> ")"
     (HConcat a b) -> prettyHExpr a <> " <> " <> prettyHExpr b
-    (HToList a) -> "toList(" <> prettyHExpr a <> ")"
+    HToList -> "toList"
     HFlatten -> "flatten"
     (Hole t) -> "hole:" <> prettyTy t
 
@@ -506,7 +504,7 @@ hExprToExpr h =
       Pipe (hExprToExpr e1) (hExprToExpr e2)
     (HConcat e1 e2) ->
       LConcat (hExprToExpr e1) (hExprToExpr e2)
-    (HToList e) -> ToList $ hExprToExpr e
+    HToList -> ToList
     HFlatten -> Flatten
     (HMap e _) -> EMap $ hExprToExpr e
     (Hole _) -> error "can't convert an open hypothesis to an expression"
@@ -517,7 +515,7 @@ isClosed (HConstruct es) = all isClosed $ map snd es
 isClosed (HPipe e1 e2 _) = isClosed e1 && isClosed e2
 isClosed (HMap e _) = isClosed e
 isClosed (HConcat e1 e2) = isClosed e1 && isClosed e2
-isClosed (HToList e) = isClosed e
+isClosed HToList = True
 isClosed HFlatten = True
 isClosed (Hole _) = False
 
@@ -527,25 +525,24 @@ hSize (HConstruct es) = 1 + sum (map (hSize . snd) es)
 hSize (HPipe e1 e2 _) = hSize e1 + hSize e2
 hSize (HMap e _) = 1 + hSize e
 hSize (HConcat e1 e2) = 1 + hSize e1 + hSize e2
-hSize (HToList e) = 1 + hSize e
+hSize HToList = 1
 hSize HFlatten = 1
 hSize (Hole _) = 1
 
 data SynthRes
   = SynthRes Program -- the synthetized program
   | ProgramNotFound -- search exhausted all possibilities and didn't found a matching program
-  | SynthTimeout    -- search spent more than time limit
+  | SynthTimeout -- search spent more than time limit
   deriving (Show, Eq)
 
 -- | timeLimit in microseconds (10^-6)
 runSynth :: Int -> [JsonExample] -> IO SynthRes
 runSynth timeLimit examples =
-   fromMaybe SynthTimeout <$> timeout timeLimit (evaluate go)
-   where
-     go = case indGenSynth examples of
-            Just p -> SynthRes p
-            Nothing -> ProgramNotFound
-  
+  fromMaybe SynthTimeout <$> timeout timeLimit (evaluate go)
+  where
+    go = case indGenSynth examples of
+      Just p -> SynthRes p
+      Nothing -> ProgramNotFound
 
 indGenSynth :: [JsonExample] -> Maybe Program
 indGenSynth examples =
@@ -621,15 +618,11 @@ expand t1 hole =
       el <- expand t1 l
       er <- expand t1 r
       return $ HConcat el er
-    HToList (Hole (TVal a)) -> do
-      e <- inductiveGen t1 a
-      return $ HToList e
-    HToList e ->
-      map HToList (expand t1 e)
+    HToList -> pure HToList
     HFlatten -> pure HFlatten
     g@(HGet _) -> pure g
     Hole (TVal t) -> inductiveGen t1 t
-    h -> error $ (T.unpack $ prettyHExpr h) <> " " <> (show h)
+    h -> error $ T.unpack (prettyHExpr h) <> " " <> show h
   where
     anyHoles :: [(T.Text, HExpr)] -> Bool
     anyHoles = any (isHole . snd)
@@ -679,15 +672,27 @@ inductiveGen ctx t =
         TArray _ ->
           [HConcat (Hole $ TVal t) (Hole $ TVal t)]
         _ -> []
+    -- if t is an array [a] and ctx is a, then suggest toList
+    -- if t is an array [a], suggest a pipe of the form a | toList
     toListHs =
-      case t of
-        TArray a -> [HToList (Hole $ TVal a)]
-        _ -> []
+      ( case (ctx, t) of
+          (a, TArray b) | a == b -> [HToList]
+          _ -> []
+      )
+        ++ ( case t of
+               TArray b -> [HPipe (Hole $ TVal b) HToList b]
+               _ -> []
+           )
     -- if t is an array, it can be produced by flattening
     -- an array of ts
     flattenHs =
-      case t of
-        (TArray _) ->
-          let t' = TArray t 
-          in [HFlatten, HPipe (Hole $ TVal t') HFlatten t']
-        _ -> []
+      ( case (ctx, t) of
+          (TArray a, b) | a == b -> [HFlatten]
+          _ -> []
+      )
+        ++ ( case t of
+               (TArray _) ->
+                 let t' = TArray t
+                  in [HPipe (Hole $ TVal t') HFlatten t']
+               _ -> []
+           )
