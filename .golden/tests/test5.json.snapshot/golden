@@ -1,0 +1,3 @@
+function program(x) {
+    return x.age
+}

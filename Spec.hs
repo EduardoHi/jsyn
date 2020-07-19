@@ -6,12 +6,14 @@ module Main where
 
 import Control.Monad
 import qualified Data.Aeson as A
+import qualified Data.Text as T
 
 
 import qualified Data.HashMap.Strict as M
 
 import Jsyn
 import Test.Hspec
+import           Test.Hspec.Golden (defaultGolden)
 
 
 -- | cstring little helper to build Constant Strings in the DSL
@@ -265,9 +267,14 @@ testSynthetizer filename = do
     it "doesn't time out" $ res `shouldNotBe` SynthTimeout
     it "doesn't fail to find a program" $ res `shouldNotBe` ProgramNotFound
 
+    let (SynthRes program) = res
+
     it "is consistent with examples" $ do
-      let (SynthRes Program {programBody = expr}) = res
+      let Program {programBody = expr} = program
       expr `shouldSatisfy` consistent examples
+
+    it "matches golden javascript function" $
+      defaultGolden (filename <> ".snapshot") (T.unpack $ toJS program)
 
 main :: IO ()
 main =

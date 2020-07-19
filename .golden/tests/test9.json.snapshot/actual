@@ -1,0 +1,3 @@
+function program(x) {
+    return x.map( x => { return {"online":x.hostinfo.online, "name":x.hostinfo.name, "id":x.id, "host":x.hostinfo.host}; })
+}

@@ -1,0 +1,3 @@
+function program(x) {
+    return {"name":x.name, "numbers":[x.number1] + [x.number2]}
+}

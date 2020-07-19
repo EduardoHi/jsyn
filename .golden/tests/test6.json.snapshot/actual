@@ -1,0 +1,3 @@
+function program(x) {
+    return {"age":x.age, "gpa":x.gpa}
+}

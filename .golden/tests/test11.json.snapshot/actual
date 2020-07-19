@@ -1,0 +1,3 @@
+function program(x) {
+    return (x.map( x => { return x.rooms.map( x => { return x.color; }); })).flat()
+}
