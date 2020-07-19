@@ -21,11 +21,10 @@ import GHC.Generics
 import System.Timeout (timeout)
 
 -- Since jsyn is a tool for Programming by Example,
--- we need to represent an example. An JsonExample is a pair of
+-- we need to represent an example. A JsonExample is a pair of
 -- input and output json values. This datatype can be encoded
 -- and decoded from json.
--- The ToJSON and FromJSON instances are just how the
--- Aeson documentation suggests.
+-- The ToJSON and FromJSON instances are implemented following the Aeson documentation.
 
 data JsonExample = JsonExample
   { input :: A.Value,
@@ -72,6 +71,7 @@ inferVTexamples examples =
 
 -- ** Values
 
+-- A json value is exactly the same as the Aeson Json datatype.
 type Value = A.Value
 
 isString :: Value -> Bool
@@ -93,6 +93,8 @@ fromString v = error $ "value is not a string" ++ show v
 -- the Arrays are homogenous and they contain the same type in every position,
 -- but this is not the case either the json spec, nor in real life jsons.
 -- This is a place for improvement for the project, and has room for experimentation.
+
+-- TODO: Support Heterogeneous Arrays
 
 -- Another important thing to note is that the type of an object is defined
 -- by the name of the keys and the type of each value.
@@ -554,7 +556,11 @@ indGenSynth examples =
     (TVal t1 `TArrow` TVal t2) = inferVTexamples examples
     hypotheses = inductiveGen t1 t2
 
-indGenSearch :: ValTy -> [JsonExample] -> [HExpr] -> [Maybe Program]
+-- | for now, the context is a single value (the current argument in scope) but that can be
+-- extended eventually
+type Context = ValTy
+
+indGenSearch :: Context -> [JsonExample] -> [HExpr] -> [Maybe Program]
 indGenSearch t1 examples hs =
   -- split closed and open hypotheses
   -- for every closed hypothesis, check if any is consistent, if it is return that one
@@ -571,10 +577,6 @@ indGenSearch t1 examples hs =
               expandedHypotheses = concatMap (expand t1) openhs'
               programs :: [Maybe Program]
               programs = indGenSearch t1 examples expandedHypotheses
-
--- | for now, the context is a single value (the current argument in scope) but that can be
--- extended eventually
-type Context = ValTy
 
 -- given an open hypothesis, that is a node with holes in its leafs
 -- returns all the possible fillings of that node.

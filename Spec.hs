@@ -275,10 +275,15 @@ main =
     testTasks testCases
 
     describe "inductive generalization search" $ do
+      -- fails, identity function is missing...
       testSynthetizer "tests/test1.json"
+      -- fails, can't infer values used as keys
       testSynthetizer "tests/test2.json"
+      -- fails, can't infer value used as key
       testSynthetizer "tests/test3.json"
+      -- fails, inverse of test 3
       testSynthetizer "tests/test4.json"
+
       testSynthetizer "tests/test5.json"
       testSynthetizer "tests/test6.json"
       testSynthetizer "tests/test7.json"
