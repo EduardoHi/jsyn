@@ -293,8 +293,16 @@ main =
       testSynthetizer "tests/test11.json"
       testSynthetizer "tests/test12.json"
       testSynthetizer "tests/test13.json"
+    -- fails, can't handle heterogeneous lists correctly yet
       testSynthetizer "tests/test14.json"
+
       testSynthetizer "tests/test15.json"
       testSynthetizer "tests/test16.json"
       testSynthetizer "tests/test17.json"
       testSynthetizer "tests/test18.json"
+
+      -- equality on numbers
+      testSynthetizer "tests/test20.json"
+
+      -- fails, equality on values
+      testSynthetizer "tests/test21.json"

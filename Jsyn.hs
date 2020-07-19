@@ -250,6 +250,7 @@ data Expr
   | -- /2 arity functions
     Get Expr
   | EMap Expr
+  | Equal Expr Expr
   | Construct [(Expr, Expr)]
   | -- /3 arity functions
     Union Expr Expr
@@ -282,6 +283,7 @@ eval x val = case x of
   Const v -> pure v
   -- partially evaluated
   Get f -> get val f
+  Equal l r -> equal val l r
   Construct fs -> construct val fs
   Pipe f g -> pipe val f g
   -- partially evaluated
@@ -293,6 +295,13 @@ eval x val = case x of
   LConcat l r -> evalconcat val l r
   ToList -> return $ A.Array $ V.singleton val
   Flatten -> flatten val
+
+-- piggy back on Aeson's value equality
+equal :: Value -> Expr -> Expr -> EvalRes
+equal val l r = do
+  l' <- eval l val
+  r' <- eval r val
+  return $ A.Bool $ l' == r'
 
 keys :: Value -> EvalRes
 keys (A.Object o) =
@@ -423,6 +432,7 @@ toJSInline s x =
         else s <> "[" <> f' <> "]"
       where
         f' = toJSInline s f
+    (Equal l r) -> toJSInline s l <> " == " <> toJSInline s r
     (Construct fs) ->
       "{" <> inlinePairs <> "}"
       where
@@ -464,6 +474,7 @@ consistent examples expr =
 -- hypothesis expression
 data HExpr
   = HGet T.Text
+  | HEqual HExpr HExpr
   | HConstruct [(T.Text, HExpr)]
   | HPipe HExpr HExpr ValTy
   | HMap HExpr ValTy
@@ -494,12 +505,14 @@ prettyHExpr e =
     (HConcat a b) -> prettyHExpr a <> " <> " <> prettyHExpr b
     HToList -> "toList"
     HFlatten -> "flatten"
+    HEqual l r -> prettyHExpr l <> " == " <> prettyHExpr r
     (Hole t) -> "hole:" <> prettyTy t
 
 hExprToExpr :: HExpr -> Expr
 hExprToExpr h =
   case h of
     (HGet t) -> Get . Const . A.String $ t
+    (HEqual l r) -> Equal (hExprToExpr l) (hExprToExpr r)
     (HConstruct es) ->
       Construct $ map (bimap (Const . A.String) hExprToExpr) es
     (HPipe e1 e2 _) ->
@@ -513,6 +526,7 @@ hExprToExpr h =
 
 isClosed :: HExpr -> Bool
 isClosed (HGet _) = True
+isClosed (HEqual l r) = isClosed l && isClosed r
 isClosed (HConstruct es) = all isClosed $ map snd es
 isClosed (HPipe e1 e2 _) = isClosed e1 && isClosed e2
 isClosed (HMap e _) = isClosed e
@@ -523,6 +537,7 @@ isClosed (Hole _) = False
 
 hSize :: HExpr -> Int
 hSize (HGet _) = 1
+hSize (HEqual l r) = 1 + hSize l + hSize r
 hSize (HConstruct es) = 1 + sum (map (hSize . snd) es)
 hSize (HPipe e1 e2 _) = hSize e1 + hSize e2
 hSize (HMap e _) = 1 + hSize e
@@ -623,6 +638,14 @@ expand t1 hole =
     HToList -> pure HToList
     HFlatten -> pure HFlatten
     g@(HGet _) -> pure g
+    HEqual (Hole (TVal lt)) (Hole (TVal rt))-> do
+      el <- inductiveGen t1 lt
+      er <- inductiveGen t1 rt
+      return $ HEqual el er
+    HEqual l r -> do
+      el <- expand t1 l
+      er <- expand t1 r
+      return $ HEqual el er
     Hole (TVal t) -> inductiveGen t1 t
     h -> error $ T.unpack (prettyHExpr h) <> " " <> show h
   where
@@ -634,8 +657,20 @@ expand t1 hole =
 -- that type, i.e. hypotheses that can 'fill' such hole.
 inductiveGen :: Context -> ValTy -> [HExpr]
 inductiveGen ctx t =
-  getHs ++ mapHs ++ toListHs ++ flattenHs ++ concatHs ++ constructHs ++ pipeHs
+  getHs ++ mapHs ++ toListHs ++ flattenHs ++ concatHs ++ constructHs ++ pipeHs ++ equalHs
   where
+    -- equal hypotheses, if the result type is a bool, then the hypotheses is
+    -- an equality between the ctx and the hole (the type must be the same)
+    equalHs =
+      case t of
+        TBool ->
+          let types = case ctx of
+                TObject o -> nub $ M.elems o
+                _ -> []
+          in do
+            ta <- types
+            return $ HEqual (Hole $ TVal ta) (Hole $ TVal ta)
+        _ -> []
     -- get hypotheses, note how this generates hypotheses without holes
     getHs =
       case ctx of

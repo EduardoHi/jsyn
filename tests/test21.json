@@ -1,0 +1,30 @@
+[
+  {
+    "input": {
+      "a": 2,
+      "b": 1
+    },
+    "output": false
+  },
+  {
+    "input": {
+      "a": 1,
+      "b": 1
+    },
+    "output": true
+  },
+  {
+    "input": {
+      "a": ["abc"],
+      "b": ["abc"]
+    },
+    "output": "true"
+  },
+  {
+    "input": {
+      "a": 1,
+      "b": -1
+    },
+    "output": false
+  }
+]

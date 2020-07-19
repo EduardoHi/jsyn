@@ -6,6 +6,9 @@ import qualified Data.Text as T
 import Jsyn
 import System.Environment
 
+
+-- readJsonExamples |> runSynth |> toJS
+
 main :: IO ()
 main = do
   args <- getArgs
