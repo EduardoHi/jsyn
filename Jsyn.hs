@@ -250,7 +250,11 @@ data Expr
   | -- /2 arity functions
     Get Expr
   | EMap Expr
+    -- boolean operators
   | Equal Expr Expr
+  | Not Expr
+  | And Expr Expr
+  | Or Expr Expr
   | Construct [(Expr, Expr)]
   | -- /3 arity functions
     Union Expr Expr
@@ -284,6 +288,11 @@ eval x val = case x of
   -- partially evaluated
   Get f -> get val f
   Equal l r -> equal val l r
+
+  Not e -> bnot val e
+  And l r -> band val l r
+  Or l r -> bor val l r
+
   Construct fs -> construct val fs
   Pipe f g -> pipe val f g
   -- partially evaluated
@@ -302,6 +311,33 @@ equal val l r = do
   l' <- eval l val
   r' <- eval r val
   return $ A.Bool $ l' == r'
+
+bnot :: Value -> Expr -> EvalRes
+bnot val e = do
+  e' <- eval e val
+  case e' of
+    A.Bool b -> Right . A.Bool $ not b
+    _ -> Left $ "called boolean function not with value: " ++ show e'
+
+band :: Value -> Expr -> Expr -> EvalRes
+band val l r = do
+  l' <- eval l val
+  r' <- eval r val
+  case (l', r') of
+    (A.Bool bl, A.Bool br) -> Right . A.Bool $ bl && br
+    (_, A.Bool _) -> Left "Left hand side of && is not a boolean"
+    (A.Bool _, _) -> Left "Right hand side of && is not a boolean"
+    (_, _) -> Left "boolean && was called with non booleans"
+
+bor :: Value -> Expr -> Expr -> EvalRes
+bor val l r = do
+  l' <- eval l val
+  r' <- eval r val
+  case (l', r') of
+    (A.Bool bl, A.Bool br) -> Right . A.Bool $ bl || br
+    (_, A.Bool _) -> Left "Left hand side of || is not a boolean"
+    (A.Bool _, _) -> Left "Right hand side of || is not a boolean"
+    (_, _) -> Left "boolean || was called with non booleans"
 
 keys :: Value -> EvalRes
 keys (A.Object o) =
@@ -433,6 +469,9 @@ toJSInline s x =
       where
         f' = toJSInline s f
     (Equal l r) -> toJSInline s l <> " == " <> toJSInline s r
+    (Not e) ->  "!" <> toJSInline s e
+    (And l r) -> toJSInline s l <> " && " <> toJSInline s r
+    (Or l r) -> toJSInline s l <> " && " <> toJSInline s r
     (Construct fs) ->
       "{" <> inlinePairs <> "}"
       where
@@ -475,6 +514,9 @@ consistent examples expr =
 data HExpr
   = HGet T.Text
   | HEqual HExpr HExpr
+  | HNot HExpr
+  | HAnd HExpr HExpr
+  | HOr HExpr HExpr
   | HConstruct [(T.Text, HExpr)]
   | HPipe HExpr HExpr ValTy
   | HMap HExpr ValTy
@@ -506,6 +548,9 @@ prettyHExpr e =
     HToList -> "toList"
     HFlatten -> "flatten"
     HEqual l r -> prettyHExpr l <> " == " <> prettyHExpr r
+    HNot e' -> "!" <> prettyHExpr e'
+    HAnd l r -> prettyHExpr l <> " && " <> prettyHExpr r
+    HOr l r -> prettyHExpr l <> " || " <> prettyHExpr r
     (Hole t) -> "hole:" <> prettyTy t
 
 hExprToExpr :: HExpr -> Expr
@@ -513,6 +558,9 @@ hExprToExpr h =
   case h of
     (HGet t) -> Get . Const . A.String $ t
     (HEqual l r) -> Equal (hExprToExpr l) (hExprToExpr r)
+    (HNot e) -> Not (hExprToExpr e)
+    (HAnd l r) -> And (hExprToExpr l) (hExprToExpr r)
+    (HOr l r) -> Or (hExprToExpr l) (hExprToExpr r)
     (HConstruct es) ->
       Construct $ map (bimap (Const . A.String) hExprToExpr) es
     (HPipe e1 e2 _) ->
@@ -527,6 +575,10 @@ hExprToExpr h =
 isClosed :: HExpr -> Bool
 isClosed (HGet _) = True
 isClosed (HEqual l r) = isClosed l && isClosed r
+isClosed (HNot e) = isClosed e
+isClosed (HOr l r) = isClosed l && isClosed r
+isClosed (HAnd l r) = isClosed l && isClosed r
+
 isClosed (HConstruct es) = all isClosed $ map snd es
 isClosed (HPipe e1 e2 _) = isClosed e1 && isClosed e2
 isClosed (HMap e _) = isClosed e
@@ -538,6 +590,9 @@ isClosed (Hole _) = False
 hSize :: HExpr -> Int
 hSize (HGet _) = 1
 hSize (HEqual l r) = 1 + hSize l + hSize r
+hSize (HNot e) = 1 + hSize e
+hSize (HOr l r) = 1 + hSize l + hSize r
+hSize (HAnd l r) = 1 + hSize l + hSize r
 hSize (HConstruct es) = 1 + sum (map (hSize . snd) es)
 hSize (HPipe e1 e2 _) = hSize e1 + hSize e2
 hSize (HMap e _) = 1 + hSize e
@@ -638,6 +693,7 @@ expand t1 hole =
     HToList -> pure HToList
     HFlatten -> pure HFlatten
     g@(HGet _) -> pure g
+
     HEqual (Hole (TVal lt)) (Hole (TVal rt))-> do
       el <- inductiveGen t1 lt
       er <- inductiveGen t1 rt
@@ -646,6 +702,32 @@ expand t1 hole =
       el <- expand t1 l
       er <- expand t1 r
       return $ HEqual el er
+
+    HNot (Hole (TVal et)) -> do
+      e' <- inductiveGen t1 et
+      return $ HNot e'
+    HNot e -> do
+      e' <- expand t1 e
+      return $ HNot e'
+
+    HAnd (Hole (TVal lt)) (Hole (TVal rt))-> do
+      el <- inductiveGen t1 lt
+      er <- inductiveGen t1 rt
+      return $ HAnd el er
+    HAnd l r -> do
+      el <- expand t1 l
+      er <- expand t1 r
+      return $ HAnd el er
+
+    HOr (Hole (TVal lt)) (Hole (TVal rt))-> do
+      el <- inductiveGen t1 lt
+      er <- inductiveGen t1 rt
+      return $ HOr el er
+    HOr l r -> do
+      el <- expand t1 l
+      er <- expand t1 r
+      return $ HOr el er
+
     Hole (TVal t) -> inductiveGen t1 t
     h -> error $ T.unpack (prettyHExpr h) <> " " <> show h
   where
@@ -658,7 +740,20 @@ expand t1 hole =
 inductiveGen :: Context -> ValTy -> [HExpr]
 inductiveGen ctx t =
   getHs ++ mapHs ++ toListHs ++ flattenHs ++ concatHs ++ constructHs ++ pipeHs ++ equalHs
+  ++ notHs ++ andHs ++ orHs
   where
+    notHs =
+      case t of
+        TBool -> [HNot . Hole $ TVal TBool]
+        _ -> []
+    andHs =
+      case t of
+        TBool -> [HAnd (Hole $ TVal TBool) (Hole $ TVal TBool)]
+        _ -> []
+    orHs =
+      case t of
+        TBool -> [HOr (Hole $ TVal TBool) (Hole $ TVal TBool)]
+        _ -> []
     -- equal hypotheses, if the result type is a bool, then the hypotheses is
     -- an equality between the ctx and the hole (the type must be the same)
     equalHs =

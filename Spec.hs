@@ -306,3 +306,15 @@ main =
 
       -- fails, equality on values
       testSynthetizer "tests/test21.json"
+
+      -- fails, needs id, bool not
+      testSynthetizer "tests/test22.json"
+
+      -- bool and
+      testSynthetizer "tests/test23.json"
+
+      -- bool or
+      testSynthetizer "tests/test24.json"
+
+      -- bool xor
+      testSynthetizer "tests/test25.json"
