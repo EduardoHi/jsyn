@@ -1,0 +1,39 @@
+# Cabal and Stack build artefacts
+dist/
+dist-newstyle/
+cabal-dev/
+.stack-work/
+
+# GHC compilation outputs
+*.o
+*.hi
+*.dyn_o
+*.dyn_hi
+*.prof
+*.aux
+*.hp
+*.chi
+*.chs.c
+*.dump-*
+
+# Cabal configuration generated locally
+cabal.project.local
+cabal.project.freeze
+
+# GHCi and tooling history
+.ghci
+.ghc.environment.*
+*.history
+
+# Editor and IDE metadata
+.idea/
+.vscode/
+*.swp
+*.swo
+*.orig
+.tags
+*.iml
+
+# OS metadata
+.DS_Store
+Thumbs.db

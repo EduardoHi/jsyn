@@ -75,7 +75,7 @@ executable jsyn
 
   -- -- Directories containing source files.
   -- hs-source-dirs:      src
-  build-depends:       base >=4.11 && <4.12,
+  build-depends:       base >=4.11 && <4.20,
   ghc-options:      -Wall
 
   -- Base language which the package is written in.
@@ -90,7 +90,7 @@ test-suite all-tests
 
   ghc-options:      -Wall
 
-  build-depends:       base >=4.11 && <4.12,
+  build-depends:       base >=4.11 && <4.20,
                        hspec,
                        hspec-golden
 
@@ -100,7 +100,7 @@ test-suite all-tests
 benchmark synth-benchmarks
   import: dependencies
 
-  build-depends:  base >=4.11 && <4.12,
+  build-depends:  base >=4.11 && <4.20,
 
   other-modules: Jsyn
 

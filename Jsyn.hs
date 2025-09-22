@@ -8,7 +8,9 @@ import Control.DeepSeq (NFData)
 import Control.Exception (evaluate)
 import Control.Monad
 import qualified Data.Aeson as A
-import Data.Bifunctor (bimap, second)
+import qualified Data.Aeson.Key as K
+import qualified Data.Aeson.KeyMap as KM
+import Data.Bifunctor (bimap, first, second)
 import qualified Data.ByteString.Lazy.Char8 as C
 import Data.Either
 import qualified Data.HashMap.Strict as M
@@ -48,11 +50,11 @@ readJsonExamples filename = do
     Left s -> fail $ "Error decoding json: " <> s
     Right v -> return v
 
-inferVTexamples :: [JsonExample] -> Ty
+inferVTexamples :: [JsonExample] -> (ValTy, ValTy)
 inferVTexamples examples =
-  let t1 = TVal . inferArr . V.fromList $ map (inferVT . input) examples
-      t2 = TVal . inferArr . V.fromList $ map (inferVT . output) examples
-   in t1 `TArrow` t2
+  let t1 = inferArr . V.fromList $ map (inferVT . input) examples
+      t2 = inferArr . V.fromList $ map (inferVT . output) examples
+   in (t1,t2)
 
 -- From what I've learned following
 -- Programming Languages Foundations: https://softwarefoundations.cis.upenn.edu/
@@ -73,6 +75,15 @@ inferVTexamples examples =
 
 -- A json value is exactly the same as the Aeson Json datatype.
 type Value = A.Value
+
+kmToHashMap :: KM.KeyMap a -> M.HashMap T.Text a
+kmToHashMap = M.fromList . map (first K.toText) . KM.toList
+
+expectArrowValTy :: Ty -> (ValTy, ValTy)
+expectArrowValTy ty =
+  case ty of
+    TArrow (TVal inputTy) (TVal outputTy) -> (inputTy, outputTy)
+    unexpected -> error $ "Expected arrow between value types, got: " ++ show unexpected
 
 isString :: Value -> Bool
 isString (A.String _) = True
@@ -197,7 +208,7 @@ inferArr v = case V.length v of
 inferVT :: Value -> ValTy
 inferVT x =
   case x of
-    A.Object o -> TObject $ M.map inferVT o
+    A.Object o -> TObject $ M.map inferVT (kmToHashMap o)
     A.Array v -> TArray $ inferArr $ V.map inferVT v
     A.String _ -> TString
     A.Number _ -> TNumber
@@ -341,13 +352,13 @@ bor val l r = do
 
 keys :: Value -> EvalRes
 keys (A.Object o) =
-  Right . A.Array . V.fromList $ map A.String $ M.keys o
+  Right . A.Array . V.fromList $ map (A.String . K.toText) $ KM.keys o
 keys val =
   Left $ "called keys of value: " ++ show val ++ "that is not an object"
 
 elements :: Value -> EvalRes
 elements (A.Object o) =
-  Right . A.Array . V.fromList $ M.elems o
+  Right . A.Array . V.fromList $ KM.elems o
 elements val =
   Left $ "called elems of value: " ++ show val ++ "that is not an object"
 
@@ -372,7 +383,7 @@ get val f =
         maybe
           (Left . T.unpack $ "key: \"" <> v <> "\" not found in object: " <> T.pack (show o))
           Right
-          (v `M.lookup` o)
+          (KM.lookup (K.fromText v) o)
       _ -> Left $ "value: " ++ show val ++ "is not an object"
 
 construct :: Value -> [(Expr, Expr)] -> EvalRes
@@ -387,7 +398,7 @@ construct val fs =
         ((lks, _), (lvs, _)) -> Left $ unlines lks ++ "\n" ++ unlines lvs
     build ks vs =
       if all isString ks
-        then Right . A.Object . M.fromList $ zip (map fromString ks) vs
+        then Right . A.Object . KM.fromList $ zip (map (K.fromText . fromString) ks) vs
         else Left $ " keys have a value that is not a string: " ++ show (head $ takeWhile isString ks)
 
 pipe :: Value -> Expr -> Expr -> EvalRes
@@ -399,7 +410,7 @@ union val f g = do
   l <- eval f val
   r <- eval g val
   case (l, r) of
-    (A.Object o1, A.Object o2) -> Right $ A.Object (o1 `M.union` o2)
+    (A.Object o1, A.Object o2) -> Right $ A.Object (KM.union o1 o2)
     (_, A.Object _) -> Left "Left hand side of union is not an Object"
     (A.Object _, _) -> Left "Right hand side of union is not an Object"
     (_, _) -> Left "union is not with objects"
@@ -579,7 +590,7 @@ isClosed (HNot e) = isClosed e
 isClosed (HOr l r) = isClosed l && isClosed r
 isClosed (HAnd l r) = isClosed l && isClosed r
 
-isClosed (HConstruct es) = all isClosed $ map snd es
+isClosed (HConstruct es) = all (isClosed . snd) es
 isClosed (HPipe e1 e2 _) = isClosed e1 && isClosed e2
 isClosed (HMap e _) = isClosed e
 isClosed (HConcat e1 e2) = isClosed e1 && isClosed e2
@@ -612,9 +623,7 @@ runSynth :: Int -> [JsonExample] -> IO SynthRes
 runSynth timeLimit examples =
   fromMaybe SynthTimeout <$> timeout timeLimit (evaluate go)
   where
-    go = case indGenSynth examples of
-      Just p -> SynthRes p
-      Nothing -> ProgramNotFound
+    go = maybe ProgramNotFound SynthRes (indGenSynth examples)
 
 indGenSynth :: [JsonExample] -> Maybe Program
 indGenSynth examples =
@@ -623,7 +632,7 @@ indGenSynth examples =
   -- x : t1, e : t2
   msum $ indGenSearch t1 examples hypotheses
   where
-    (TVal t1 `TArrow` TVal t2) = inferVTexamples examples
+    (t1, t2) = inferVTexamples examples
     hypotheses = inductiveGen t1 t2
 
 -- | for now, the context is a single value (the current argument in scope) but that can be
@@ -681,7 +690,7 @@ expand t1 hole =
       e <- inductiveGen a b
       return $ HMap e t
     HMap e t ->
-      map (flip HMap t) (expand t e)
+      map (`HMap` t) (expand t e)
     HConcat (Hole (TVal lt)) (Hole (TVal rt)) -> do
       el <- inductiveGen t1 lt
       er <- inductiveGen t1 rt

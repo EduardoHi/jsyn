@@ -16,7 +16,7 @@ main = do
     then putStrLn "usage: jsyn <examples file>"
     else do
       ex <- readJsonExamples (head args)
-      res <- runSynth (2 * 10^6) ex
+      res <- runSynth 2000000 ex
       case res of
         SynthTimeout -> putStrLn "synthesis ran out of time"
         ProgramNotFound -> putStrLn "Exhausted all possibilities and didn't find a valid program"
