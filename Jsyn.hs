@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Jsyn where
@@ -12,7 +13,6 @@ import qualified Data.Aeson.Key as K
 import qualified Data.Aeson.KeyMap as KM
 import Data.Bifunctor (bimap, first, second)
 import qualified Data.ByteString.Lazy.Char8 as C
-import Data.Either
 import qualified Data.HashMap.Strict as M
 import Data.List (find, nub, partition)
 import Data.Maybe
@@ -78,22 +78,6 @@ type Value = A.Value
 
 kmToHashMap :: KM.KeyMap a -> M.HashMap T.Text a
 kmToHashMap = M.fromList . map (first K.toText) . KM.toList
-
-expectArrowValTy :: Ty -> (ValTy, ValTy)
-expectArrowValTy ty =
-  case ty of
-    TArrow (TVal inputTy) (TVal outputTy) -> (inputTy, outputTy)
-    unexpected -> error $ "Expected arrow between value types, got: " ++ show unexpected
-
-isString :: Value -> Bool
-isString (A.String _) = True
-isString _ = False
-
--- TODO: Boolean blindness in isString it would be better to push that to the type level but idk how
-
-fromString :: Value -> T.Text
-fromString (A.String s) = s
-fromString v = error $ "value is not a string" ++ show v
 
 -- ** Types
 
@@ -291,6 +275,28 @@ isConstString _ = False
 
 type EvalRes = Either String Value
 
+type EvalM a = Either String a
+
+expectBool :: String -> Value -> EvalM Bool
+expectBool ctx = \case
+  A.Bool b -> Right b
+  other -> Left $ ctx <> " expected a boolean but got: " <> show other
+
+expectArray :: String -> Value -> EvalM (V.Vector Value)
+expectArray ctx = \case
+  A.Array arr -> Right arr
+  other -> Left $ ctx <> " expected an array but got: " <> show other
+
+expectObject :: String -> Value -> EvalM (KM.KeyMap Value)
+expectObject ctx = \case
+  A.Object obj -> Right obj
+  other -> Left $ ctx <> " expected an object but got: " <> show other
+
+expectString :: String -> Value -> EvalM T.Text
+expectString ctx = \case
+  A.String s -> Right s
+  other -> Left $ ctx <> " expected a string but got: " <> show other
+
 eval :: Expr -> Value -> EvalRes
 eval x val = case x of
   -- partially evaluated
@@ -313,7 +319,7 @@ eval x val = case x of
   Union f g -> union val f g
   EMap f -> evalmap val f
   LConcat l r -> evalconcat val l r
-  ToList -> return $ A.Array $ V.singleton val
+  ToList -> pure $ A.Array $ V.singleton val
   Flatten -> flatten val
 
 -- piggy back on Aeson's value equality
@@ -321,46 +327,36 @@ equal :: Value -> Expr -> Expr -> EvalRes
 equal val l r = do
   l' <- eval l val
   r' <- eval r val
-  return $ A.Bool $ l' == r'
+  pure $ A.Bool $ l' == r'
 
 bnot :: Value -> Expr -> EvalRes
 bnot val e = do
-  e' <- eval e val
-  case e' of
-    A.Bool b -> Right . A.Bool $ not b
-    _ -> Left $ "called boolean function not with value: " ++ show e'
+  b <- eval e val >>= expectBool "not"
+  pure $ A.Bool $ not b
 
 band :: Value -> Expr -> Expr -> EvalRes
 band val l r = do
-  l' <- eval l val
-  r' <- eval r val
-  case (l', r') of
-    (A.Bool bl, A.Bool br) -> Right . A.Bool $ bl && br
-    (_, A.Bool _) -> Left "Left hand side of && is not a boolean"
-    (A.Bool _, _) -> Left "Right hand side of && is not a boolean"
-    (_, _) -> Left "boolean && was called with non booleans"
+  bl <- eval l val >>= expectBool "Left hand side of &&"
+  br <- eval r val >>= expectBool "Right hand side of &&"
+  pure $ A.Bool $ bl && br
 
 bor :: Value -> Expr -> Expr -> EvalRes
 bor val l r = do
-  l' <- eval l val
-  r' <- eval r val
-  case (l', r') of
-    (A.Bool bl, A.Bool br) -> Right . A.Bool $ bl || br
-    (_, A.Bool _) -> Left "Left hand side of || is not a boolean"
-    (A.Bool _, _) -> Left "Right hand side of || is not a boolean"
-    (_, _) -> Left "boolean || was called with non booleans"
+  bl <- eval l val >>= expectBool "Left hand side of ||"
+  br <- eval r val >>= expectBool "Right hand side of ||"
+  pure $ A.Bool $ bl || br
 
 keys :: Value -> EvalRes
 keys (A.Object o) =
   Right . A.Array . V.fromList $ map (A.String . K.toText) $ KM.keys o
 keys val =
-  Left $ "called keys of value: " ++ show val ++ "that is not an object"
+  Left $ "called keys on value: " ++ show val ++ " that is not an object"
 
 elements :: Value -> EvalRes
 elements (A.Object o) =
   Right . A.Array . V.fromList $ KM.elems o
 elements val =
-  Left $ "called elems of value: " ++ show val ++ "that is not an object"
+  Left $ "called elems on value: " ++ show val ++ " that is not an object"
 
 -- | val : the value from eval
 -- | f   : the filter that evaluated returns the key for the object val
@@ -369,37 +365,21 @@ elements val =
 -- if it is a single value:
 -- 2. if it's
 get :: Value -> Expr -> EvalRes
-get val f =
-  eval f val >>= get'
-  where
-    get' :: Value -> EvalRes
-    get' valKey =
-      case valKey of
-        A.String k -> getVal k
-        _ -> Left "Can't use a non-string as key"
-    getVal :: T.Text -> EvalRes
-    getVal v = case val of
-      A.Object o ->
-        maybe
-          (Left . T.unpack $ "key: \"" <> v <> "\" not found in object: " <> T.pack (show o))
-          Right
-          (KM.lookup (K.fromText v) o)
-      _ -> Left $ "value: " ++ show val ++ "is not an object"
+get val f = do
+  key <- eval f val >>= expectString "get"
+  obj <- expectObject "get" val
+  maybe
+    (Left . T.unpack $ "key: \"" <> key <> "\" not found in object: " <> T.pack (show obj))
+    Right
+    (KM.lookup (K.fromText key) obj)
 
 construct :: Value -> [(Expr, Expr)] -> EvalRes
-construct val fs =
-  let kys = map (flip eval val . fst) fs
-      vls = map (flip eval val . snd) fs
-   in construct' kys vls
-  where
-    construct' ks vs =
-      case (partitionEithers ks, partitionEithers vs) of
-        (([], rks), ([], rvs)) -> build rks rvs
-        ((lks, _), (lvs, _)) -> Left $ unlines lks ++ "\n" ++ unlines lvs
-    build ks vs =
-      if all isString ks
-        then Right . A.Object . KM.fromList $ zip (map (K.fromText . fromString) ks) vs
-        else Left $ " keys have a value that is not a string: " ++ show (head $ takeWhile isString ks)
+construct val fields = do
+  pairs <- forM fields $ \(kExpr, vExpr) -> do
+    key <- eval kExpr val >>= expectString "construct field key"
+    value <- eval vExpr val
+    pure (K.fromText key, value)
+  pure . A.Object $ KM.fromList pairs
 
 pipe :: Value -> Expr -> Expr -> EvalRes
 pipe v f g =
@@ -407,40 +387,28 @@ pipe v f g =
 
 union :: Value -> Expr -> Expr -> EvalRes
 union val f g = do
-  l <- eval f val
-  r <- eval g val
-  case (l, r) of
-    (A.Object o1, A.Object o2) -> Right $ A.Object (KM.union o1 o2)
-    (_, A.Object _) -> Left "Left hand side of union is not an Object"
-    (A.Object _, _) -> Left "Right hand side of union is not an Object"
-    (_, _) -> Left "union is not with objects"
+  left <- eval f val >>= expectObject "Left hand side of union"
+  right <- eval g val >>= expectObject "Right hand side of union"
+  pure $ A.Object (KM.union left right)
 
 evalmap :: Value -> Expr -> EvalRes
-evalmap val f =
-  case val of
-    A.Array v -> A.Array <$> sequence (V.map (eval f) v)
-    v -> Left $ "cannot map on value: " ++ show v
+evalmap val f = do
+  arr <- expectArray "map" val
+  mapped <- V.mapM (eval f) arr
+  pure $ A.Array mapped
 
 evalconcat :: Value -> Expr -> Expr -> EvalRes
 evalconcat val l r = do
-  l' <- eval l val
-  r' <- eval r val
-  case (l', r') of
-    (A.Array v1, A.Array v2) -> Right $ A.Array $ v1 <> v2
-    (_, A.Array _) -> Left "Left hand side of concat is not an Array"
-    (A.Array _, _) -> Left "Right hand side of concat is not an Array"
-    (_, _) -> Left "concat is not between lists"
+  left <- eval l val >>= expectArray "Left hand side of concat"
+  right <- eval r val >>= expectArray "Right hand side of concat"
+  pure $ A.Array $ V.concat [left, right]
 
 flatten :: Value -> EvalRes
-flatten val =
-  case val of
-    A.Array as ->
-      let vs :: Either String (V.Vector Value)
-          vs = V.concatMap id <$> V.mapM go as
-          go (A.Array v) = Right v
-          go x = Left $ show x <> " can't be flatteneed since it is not an array of arrays"
-       in second A.Array vs
-    _ -> Left $ show val <> "can't be flattened since it is not an array"
+flatten val = do
+  outer <- expectArray "flatten" val
+  inner <- V.mapM (expectArray "flatten expects each element to be an array") outer
+  let flattened = V.concat (V.toList inner)
+  pure $ A.Array flattened
 
 -- A Program is what we finally want to have, a function wrapping the filter and returning it:
 -- ```js
@@ -480,9 +448,9 @@ toJSInline s x =
       where
         f' = toJSInline s f
     (Equal l r) -> toJSInline s l <> " == " <> toJSInline s r
-    (Not e) ->  "!" <> toJSInline s e
+    (Not e) -> "!" <> toJSInline s e
     (And l r) -> toJSInline s l <> " && " <> toJSInline s r
-    (Or l r) -> toJSInline s l <> " && " <> toJSInline s r
+    (Or l r) -> toJSInline s l <> " || " <> toJSInline s r
     (Construct fs) ->
       "{" <> inlinePairs <> "}"
       where
