@@ -20,7 +20,7 @@ version:             0.1.0.0
 -- description:
 
 -- The license under which the package is released.
-license:             NONE
+license:              MIT
 
 -- The file containing the license text.
 -- license-file:        LICENSE
@@ -37,26 +37,38 @@ maintainer:          eshidalgo97@gmail.com
 
 category:            Development
 
+synopsis:
+  A "JSON-to-JSON" program synthesizer by examples
+
+description:
+  A "JSON-to-JSON" program synthesizer, based on a set of input-output examples
+  it will find a corresponding program that performs such transformation
+
 build-type:          Simple
 
 -- Extra files to be distributed with the package, such as examples or a
 -- README.
-extra-source-files:  ChangeLog.md
+extra-doc-files:  ChangeLog.md
+
+source-repository head
+  type: git
+  location: https://github.com/EduardoHi/jsyn
 
 -- Constraint on the version of Cabal needed to build this package.
 
 common dependencies
-  build-depends: aeson,
-                 containers,
-                 unordered-containers,
-                 bytestring,
-                 text,
-                 vector,
-                 scientific,
-                 hspec,
-                 mtl,
-                 criterion,
-                 deepseq
+  build-depends: 
+    aeson >= 2.2.3 && < 2.3,
+    deepseq >= 1.4.8 && < 1.5,
+    containers >= 0.6.7 && < 0.7,
+    bytestring >= 0.11.5 && < 0.12,
+    mtl >= 2.2.2 && < 2.3,
+    text >= 2.0.2 && < 2.1,
+    scientific >= 0.3.8 && < 0.4,
+    unordered-containers >= 0.2.20 && < 0.3,
+    vector >= 0.13.2 && < 0.14,
+    criterion >= 1.6.4 && < 1.7,
+    hspec >= 2.11.13 && < 2.12,
 
 
 executable jsyn
