@@ -32,7 +32,11 @@ impl Expr {
 #[derive(Debug, Error, Clone, PartialEq)]
 pub enum EvalError {
     #[error("expected {expected} in {ctx}, got {value}")]
-    ExpectedType {expected: String, ctx: String, value: String},
+    ExpectedType {
+        expected: String,
+        ctx: String,
+        value: String,
+    },
     #[error("missing key '{key}' in object {object}")]
     MissingKey { key: String, object: String },
 }

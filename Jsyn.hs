@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Jsyn (JsonExample, ValTy, SynthRes(..), runSynth, toJS) where
+module Jsyn (JsonExample, ValTy(..), SynthRes(..), Program(..), Expr(..), EvalRes, runSynth, toJS, inferVT, consistent, eval) where
 
 import JsonExample 
 import Control.Exception (evaluate)

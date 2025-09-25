@@ -1,8 +1,0 @@
----
-source: tests/synth.rs
-assertion_line: 10
-expression: program.to_js()
----
-function program(x) {
-    return {"age":x.age, "name":x.name};
-}
