@@ -43,12 +43,12 @@ fn run_synth_impl(time_limit: Duration, examples: &[JsonExample], verbose: bool)
     let (input_ty, output_ty) = infer_vt_examples(examples);
     if verbose {
         eprintln!(
-            "Starting synthesis with limit {:?} ({} examples)",
-            time_limit,
+            "INIT limit_micros={} examples={}",
+            time_limit.as_micros(),
             examples.len()
         );
-        eprintln!("Inferred input type: {:?}", input_ty);
-        eprintln!("Inferred output type: {:?}", output_ty);
+        eprintln!("INFER_TYPE input={:?}", input_ty);
+        eprintln!("INFER_TYPE output={:?}", output_ty);
     }
 
     let mut queue: VecDeque<HExpr> = VecDeque::from(inductive_gen(&input_ty, &output_ty));
@@ -56,17 +56,16 @@ fn run_synth_impl(time_limit: Duration, examples: &[JsonExample], verbose: bool)
     let mut examined = 0usize;
 
     if verbose {
-        eprintln!("Seeded search frontier with {} hypotheses", queue.len());
+        eprintln!("QUEUE seeded={} visited=0", queue.len());
+        for item in queue.iter() {
+            eprintln!("  {:?}", item);
+        }
     }
 
     while let Some(candidate) = queue.pop_front() {
         if Instant::now() > deadline {
             if verbose {
-                eprintln!(
-                    "Timed out after examining {} hypotheses and {} remaining in queue",
-                    examined,
-                    queue.len()
-                );
+                eprintln!("TIMEOUT examined={} pending={}", examined, queue.len());
             }
             return SynthResult::Timeout;
         }
@@ -78,30 +77,20 @@ fn run_synth_impl(time_limit: Duration, examples: &[JsonExample], verbose: bool)
         examined += 1;
 
         if verbose && examined % 100 == 0 {
-            eprintln!(
-                "Visited {} hypotheses (queue size {})",
-                examined,
-                queue.len()
-            );
+            eprintln!("STATS examined={} pending={}", examined, queue.len());
         }
 
         if is_closed(&candidate) {
-            if verbose {
-                eprintln!("Checking closed candidate: {:?}", candidate);
-            }
-            if let Some(expr) = h_expr_to_expr(&candidate) {
-                if consistent(examples, &expr) {
-                    if verbose {
-                        eprintln!(
-                            "Found consistent program after examining {} hypotheses",
-                            examined
-                        );
-                    }
-                    return SynthResult::Program(Program { body: expr });
+            let closed_expr = h_expr_to_expr(&candidate).unwrap();
+            if consistent(examples, &closed_expr) {
+                if verbose {
+                    eprintln!("CONSISTENT\n    {:?}", closed_expr);
                 }
-            }
-            if verbose {
-                eprintln!("Closed candidate was inconsistent with examples");
+                return SynthResult::Program(Program { body: closed_expr });
+            } else {
+                if verbose {
+                    eprintln!("INCONSISTENT\n    {:?}", closed_expr);
+                }
             }
             continue;
         }
@@ -109,9 +98,14 @@ fn run_synth_impl(time_limit: Duration, examples: &[JsonExample], verbose: bool)
         let expansions = expand(&input_ty, &candidate);
         if verbose {
             eprintln!(
-                "Expanding candidate produced {} hypotheses",
-                expansions.len()
+                "EXPAND produced={} pending={} visited={}",
+                expansions.len(),
+                queue.len(),
+                examined
             );
+            for item in &expansions {
+                eprintln!("  {:?}", item);
+            }
         }
 
         for expanded in expansions {
@@ -122,10 +116,7 @@ fn run_synth_impl(time_limit: Duration, examples: &[JsonExample], verbose: bool)
     }
 
     if verbose {
-        eprintln!(
-            "Exhausted search after visiting {} hypotheses without finding a program",
-            examined
-        );
+        eprintln!("RESULT exhausted examined={}", examined);
     }
     SynthResult::ProgramNotFound
 }

@@ -52,9 +52,6 @@ fn synth_command(lang: Option<Language>, file: PathBuf, verbose: bool) -> anyhow
     let file_display = file.display().to_string();
     let examples = read_json_examples(&file)
         .with_context(|| format!("reading examples from {}", file_display))?;
-    if verbose {
-        eprintln!("Loaded {} examples from {}", examples.len(), file_display);
-    }
 
     let result = if verbose {
         rjsyn::run_synth_verbose(Duration::from_micros(2_000_000), &examples)
