@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::Context;
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 
-use rjsyn::{read_json_examples, run_synth, SynthResult};
+use rjsyn::{read_json_examples, run_synth, types::sexpr::format_valty_pretty, SynthResult};
 
 #[derive(Parser, Debug)]
 #[command(name = "rjsyn", about = "CLI front-end for the rjsyn synthesiser")]
@@ -31,6 +31,9 @@ enum Commands {
     Infer {
         /// Path to JSON file containing a single value
         file: PathBuf,
+        /// if set, then infer will not assume it's `input/output` format.
+        #[arg(short = 'f', long, action = ArgAction::SetTrue)]
+        freeform: bool,
     },
 }
 
@@ -48,7 +51,7 @@ fn main() -> anyhow::Result<()> {
             file,
             verbose,
         } => synth_command(lang, file, verbose),
-        Commands::Infer { file } => infer_command(file),
+        Commands::Infer { file , freeform} => infer_command(file, freeform),
     }
 }
 
@@ -77,13 +80,22 @@ fn synth_command(lang: Option<Language>, file: PathBuf, verbose: bool) -> anyhow
     Ok(())
 }
 
-fn infer_command(file: PathBuf) -> anyhow::Result<()> {
+fn infer_command(file: PathBuf, freeform: bool) -> anyhow::Result<()> {
     let file_display = file.display().to_string();
     let content =
         fs::read_to_string(&file).with_context(|| format!("reading json from {}", file_display))?;
-    let value: serde_json::Value = serde_json::from_str(&content)
-        .with_context(|| format!("parsing json value from {}", file_display))?;
-    let inferred = rjsyn::types::infer_value_type(&value);
-    println!("{:#?}", inferred);
+    if freeform {
+        let value: serde_json::Value = serde_json::from_str(&content)
+            .with_context(|| format!("parsing json value from {}", file_display))?;
+        let inferred = rjsyn::types::infer_value_type(&value);
+        let sexpr = format_valty_pretty(&inferred);
+        println!("{}", sexpr);
+    } else {
+        let examples = read_json_examples(&file)
+            .with_context(|| format!("reading examples from {}", file_display))?;
+        let (in_inferred, out_inferred) = rjsyn::types::infer_vt_examples(&examples);
+
+        println!("INPUT\n{}\nOUTPUT\n{}\n", format_valty_pretty(&in_inferred), format_valty_pretty(&out_inferred));
+    }
     Ok(())
 }
