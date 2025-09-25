@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- |
-module Main where
+module Spec where
 
 import Control.Monad
 import qualified Data.Aeson as A
@@ -11,9 +11,9 @@ import qualified Data.Text as T
 
 import qualified Data.HashMap.Strict as M
 
-import Jsyn
 import Test.Hspec
-import           Test.Hspec.Golden (defaultGolden)
+import Test.Hspec.Golden (defaultGolden)
+import Jsyn (ValTy)
 
 
 -- | cstring little helper to build Constant Strings in the DSL

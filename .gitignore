@@ -37,3 +37,6 @@ cabal.project.freeze
 # OS metadata
 .DS_Store
 Thumbs.db
+
+rjsyn/target/.*
+rjsyn/target/*

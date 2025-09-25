@@ -1,11 +1,9 @@
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Jsyn where
+module Jsyn (JsonExample, ValTy, SynthRes(..), runSynth, toJS) where
 
-import Control.DeepSeq (NFData)
+import JsonExample 
 import Control.Exception (evaluate)
 import Control.Monad
 import qualified Data.Aeson as A
@@ -19,7 +17,6 @@ import Data.Maybe
 import qualified Data.Text as T
 import Data.Text.Encoding as E
 import qualified Data.Vector as V
-import GHC.Generics
 import System.Timeout (timeout)
 
 -- Since jsyn is a tool for Programming by Example,
@@ -28,27 +25,6 @@ import System.Timeout (timeout)
 -- and decoded from json.
 -- The ToJSON and FromJSON instances are implemented following the Aeson documentation.
 
-data JsonExample = JsonExample
-  { input :: A.Value,
-    output :: A.Value
-  }
-  deriving (Generic, Show, NFData)
-
-instance A.ToJSON JsonExample where
-  toEncoding = A.genericToEncoding A.defaultOptions
-
-instance A.FromJSON JsonExample
-
-decodeJsonExamples :: C.ByteString -> Either String [JsonExample]
-decodeJsonExamples content =
-  A.eitherDecode content :: Either String [JsonExample]
-
-readJsonExamples :: String -> IO [JsonExample]
-readJsonExamples filename = do
-  content <- C.readFile filename
-  case decodeJsonExamples content of
-    Left s -> fail $ "Error decoding json: " <> s
-    Right v -> return v
 
 inferVTexamples :: [JsonExample] -> (ValTy, ValTy)
 inferVTexamples examples =

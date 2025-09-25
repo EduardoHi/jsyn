@@ -4,6 +4,7 @@ module Main where
 
 import qualified Data.Text as T
 import Jsyn
+import JsonExample
 import System.Environment
 
 
