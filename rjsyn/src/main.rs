@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Context;
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 
 use rjsyn::{read_json_examples, run_synth, SynthResult};
 
@@ -23,6 +23,9 @@ enum Commands {
         lang: Option<Language>,
         /// Path to JSON examples file
         file: PathBuf,
+        /// Print progress information while searching
+        #[arg(short = 'v', long, action = ArgAction::SetTrue)]
+        verbose: bool,
     },
     /// Infer the abstract type of a JSON value
     Infer {
@@ -40,16 +43,26 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Synth { lang, file } => synth_command(lang, file),
+        Commands::Synth { lang, file, verbose } => synth_command(lang, file, verbose),
         Commands::Infer { file } => infer_command(file),
     }
 }
 
-fn synth_command(lang: Option<Language>, file: PathBuf) -> anyhow::Result<()> {
+fn synth_command(lang: Option<Language>, file: PathBuf, verbose: bool) -> anyhow::Result<()> {
     let file_display = file.display().to_string();
     let examples = read_json_examples(&file)
         .with_context(|| format!("reading examples from {}", file_display))?;
-    match run_synth(Duration::from_micros(2_000_000), &examples) {
+    if verbose {
+        eprintln!("Loaded {} examples from {}", examples.len(), file_display);
+    }
+
+    let result = if verbose {
+        rjsyn::run_synth_verbose(Duration::from_micros(2_000_000), &examples)
+    } else {
+        run_synth(Duration::from_micros(2_000_000), &examples)
+    };
+
+    match result {
         SynthResult::Program(program) => match lang {
             Some(Language::Javascript) => println!("{}", program.to_js()),
             None => println!("{:#?}", program),

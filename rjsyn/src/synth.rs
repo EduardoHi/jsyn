@@ -31,13 +31,43 @@ pub enum HExpr {
 type Context = ValTy;
 
 pub fn run_synth(time_limit: Duration, examples: &[JsonExample]) -> SynthResult {
+    run_synth_impl(time_limit, examples, false)
+}
+
+pub fn run_synth_verbose(time_limit: Duration, examples: &[JsonExample]) -> SynthResult {
+    run_synth_impl(time_limit, examples, true)
+}
+
+fn run_synth_impl(time_limit: Duration, examples: &[JsonExample], verbose: bool) -> SynthResult {
     let deadline = Instant::now() + time_limit;
     let (input_ty, output_ty) = infer_vt_examples(examples);
+    if verbose {
+        eprintln!(
+            "Starting synthesis with limit {:?} ({} examples)",
+            time_limit,
+            examples.len()
+        );
+        eprintln!("Inferred input type: {:?}", input_ty);
+        eprintln!("Inferred output type: {:?}", output_ty);
+    }
+
     let mut queue: VecDeque<HExpr> = VecDeque::from(inductive_gen(&input_ty, &output_ty));
     let mut visited: Vec<HExpr> = Vec::new();
+    let mut examined = 0usize;
+
+    if verbose {
+        eprintln!("Seeded search frontier with {} hypotheses", queue.len());
+    }
 
     while let Some(candidate) = queue.pop_front() {
         if Instant::now() > deadline {
+            if verbose {
+                eprintln!(
+                    "Timed out after examining {} hypotheses and {} remaining in queue",
+                    examined,
+                    queue.len()
+                );
+            }
             return SynthResult::Timeout;
         }
 
@@ -45,23 +75,58 @@ pub fn run_synth(time_limit: Duration, examples: &[JsonExample]) -> SynthResult 
             continue;
         }
         visited.push(candidate.clone());
+        examined += 1;
+
+        if verbose && examined % 100 == 0 {
+            eprintln!(
+                "Visited {} hypotheses (queue size {})",
+                examined,
+                queue.len()
+            );
+        }
 
         if is_closed(&candidate) {
+            if verbose {
+                eprintln!("Checking closed candidate: {:?}", candidate);
+            }
             if let Some(expr) = h_expr_to_expr(&candidate) {
                 if consistent(examples, &expr) {
+                    if verbose {
+                        eprintln!(
+                            "Found consistent program after examining {} hypotheses",
+                            examined
+                        );
+                    }
                     return SynthResult::Program(Program { body: expr });
                 }
+            }
+            if verbose {
+                eprintln!("Closed candidate was inconsistent with examples");
             }
             continue;
         }
 
-        for expanded in expand(&input_ty, &candidate) {
+        let expansions = expand(&input_ty, &candidate);
+        if verbose {
+            eprintln!(
+                "Expanding candidate produced {} hypotheses",
+                expansions.len()
+            );
+        }
+
+        for expanded in expansions {
             if !visited.iter().any(|v| v == &expanded) && !queue.iter().any(|q| q == &expanded) {
                 queue.push_back(expanded);
             }
         }
     }
 
+    if verbose {
+        eprintln!(
+            "Exhausted search after visiting {} hypotheses without finding a program",
+            examined
+        );
+    }
     SynthResult::ProgramNotFound
 }
 
