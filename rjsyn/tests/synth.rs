@@ -2,9 +2,9 @@ use std::time::Duration;
 
 use indexmap::IndexMap;
 use rjsyn::dsl::{self, Expr};
+use rjsyn::synth::SynthResult;
 use rjsyn::types::{infer_value_type, ValTy};
 use rjsyn::{read_json_examples, run_synth, JsonExample};
-use rjsyn::synth::SynthResult;
 
 struct TestTask {
     name: &'static str,
@@ -168,26 +168,23 @@ fn filter7() -> Expr {
 }
 
 fn base_person_type() -> ValTy {
-    object_type(vec![
-        ("age", ValTy::Number),
-        ("name", ValTy::String),
-    ])
+    object_type(vec![("age", ValTy::Number), ("name", ValTy::String)])
 }
 
 fn host_info_object() -> ValTy {
-    object_type(vec![
-        ("name", ValTy::String),
-        ("host", ValTy::String),
-    ])
+    object_type(vec![("name", ValTy::String), ("host", ValTy::String)])
 }
 
 fn hostinfo_with_flag() -> ValTy {
     object_type(vec![
-        ("hostinfo", object_type(vec![
-            ("online", ValTy::Bool),
-            ("name", ValTy::String),
-            ("host", ValTy::String),
-        ])),
+        (
+            "hostinfo",
+            object_type(vec![
+                ("online", ValTy::Bool),
+                ("name", ValTy::String),
+                ("host", ValTy::String),
+            ]),
+        ),
         ("id", ValTy::Number),
     ])
 }
@@ -198,18 +195,13 @@ fn types1() -> Vec<(ValTy, ValTy)> {
 }
 
 fn types2() -> Vec<(ValTy, ValTy)> {
-    vec![
-        (
-            object_type(vec![
-                ("Chicago", ValTy::String),
-                ("Seattle", ValTy::String),
-            ]),
-            object_type(vec![
-                ("Los Angeles", ValTy::String),
-                ("New York", ValTy::String),
-            ]),
-        ),
-    ]
+    vec![(
+        object_type(vec![("Chicago", ValTy::String), ("Seattle", ValTy::String)]),
+        object_type(vec![
+            ("Los Angeles", ValTy::String),
+            ("New York", ValTy::String),
+        ]),
+    )]
 }
 
 fn types3() -> Vec<(ValTy, ValTy)> {
@@ -233,14 +225,8 @@ fn types4() -> Vec<(ValTy, ValTy)> {
     ]);
     let nested = host_info_object();
     vec![
-        (
-            object_type(vec![("key1", nested.clone())]),
-            target.clone(),
-        ),
-        (
-            object_type(vec![("key2", nested)]),
-            target,
-        ),
+        (object_type(vec![("key1", nested.clone())]), target.clone()),
+        (object_type(vec![("key2", nested)]), target),
     ]
 }
 
@@ -254,10 +240,7 @@ fn types6() -> Vec<(ValTy, ValTy)> {
         ("name", ValTy::String),
         ("gpa", ValTy::Number),
     ]);
-    let output = object_type(vec![
-        ("age", ValTy::Number),
-        ("gpa", ValTy::Number),
-    ]);
+    let output = object_type(vec![("age", ValTy::Number), ("gpa", ValTy::Number)]);
     vec![(input, output)]
 }
 

@@ -87,10 +87,8 @@ fn run_synth_impl(time_limit: Duration, examples: &[JsonExample], verbose: bool)
                     eprintln!("CONSISTENT\n    {:?}", closed_expr);
                 }
                 return SynthResult::Program(Program { body: closed_expr });
-            } else {
-                if verbose {
+            } else if verbose {
                     eprintln!("INCONSISTENT\n    {:?}", closed_expr);
-                }
             }
             continue;
         }

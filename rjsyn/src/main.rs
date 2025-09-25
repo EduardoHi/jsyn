@@ -43,7 +43,11 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Synth { lang, file, verbose } => synth_command(lang, file, verbose),
+        Commands::Synth {
+            lang,
+            file,
+            verbose,
+        } => synth_command(lang, file, verbose),
         Commands::Infer { file } => infer_command(file),
     }
 }

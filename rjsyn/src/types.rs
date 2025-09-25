@@ -3,6 +3,8 @@ use indexmap::IndexMap;
 use serde_json::Value;
 use std::fmt;
 
+pub mod sexpr;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Ty {
     Arrow(Box<Ty>, Box<Ty>),
@@ -15,8 +17,9 @@ impl Ty {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum ValTy {
+    #[default]
     Value,
     Object(IndexMap<String, ValTy>),
     Array(Box<ValTy>),
@@ -24,12 +27,6 @@ pub enum ValTy {
     Number,
     Bool,
     Null,
-}
-
-impl Default for ValTy {
-    fn default() -> Self {
-        ValTy::Value
-    }
 }
 
 impl fmt::Display for Ty {

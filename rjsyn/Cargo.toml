@@ -11,6 +11,7 @@ anyhow = "1"
 indexmap = "2"
 smallvec = "1"
 clap = { version = "4", features = ["derive"] }
+nom = "7"
 
 [dev-dependencies]
 insta = { version = "1", features = ["yaml"] }
