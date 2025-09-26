@@ -1,8 +1,16 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 use std::time::Duration;
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use rjsyn::{read_json_examples, run_synth, JsonExample, SynthResult};
+use criterion::black_box;
+use criterion::criterion_group;
+use criterion::criterion_main;
+use criterion::BenchmarkId;
+use criterion::Criterion;
+use rjsyn::read_json_examples;
+use rjsyn::run_synth;
+use rjsyn::JsonExample;
+use rjsyn::SynthResult;
 
 const TIME_LIMIT: Duration = Duration::from_secs(30);
 

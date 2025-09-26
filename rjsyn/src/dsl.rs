@@ -1,9 +1,8 @@
 pub mod sexpr;
 
-use crate::{
-    json_example::JsonExample,
-    types::{Ty, ValTy},
-};
+use crate::json_example::JsonExample;
+use crate::types::Ty;
+use crate::types::ValTy;
 use serde_json::Value;
 use std::fmt;
 use thiserror::Error;

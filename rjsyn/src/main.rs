@@ -3,10 +3,16 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Context;
-use clap::{ArgAction, Parser, Subcommand, ValueEnum};
+use clap::ArgAction;
+use clap::Parser;
+use clap::Subcommand;
+use clap::ValueEnum;
 
 use rjsyn::dsl::sexpr::parse_program_sexpr;
-use rjsyn::{read_json_examples, run_synth, types::sexpr::format_valty_pretty, SynthResult};
+use rjsyn::read_json_examples;
+use rjsyn::run_synth;
+use rjsyn::types::sexpr::format_valty_pretty;
+use rjsyn::SynthResult;
 
 #[derive(Parser, Debug)]
 #[command(name = "rjsyn", about = "CLI front-end for the rjsyn synthesiser")]

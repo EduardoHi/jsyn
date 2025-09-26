@@ -1,9 +1,15 @@
-use crate::dsl::{consistent, Expr, HExpr, Program};
+use crate::dsl::consistent;
+use crate::dsl::Expr;
+use crate::dsl::HExpr;
+use crate::dsl::Program;
 use crate::json_example::JsonExample;
-use crate::types::{infer_vt_examples, Ty, ValTy};
+use crate::types::infer_vt_examples;
+use crate::types::Ty;
+use crate::types::ValTy;
 use serde_json::Value;
 use std::collections::VecDeque;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SynthResult {

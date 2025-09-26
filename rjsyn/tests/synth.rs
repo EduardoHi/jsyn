@@ -1,10 +1,14 @@
 use std::time::Duration;
 
 use indexmap::IndexMap;
-use rjsyn::dsl::{self, Expr};
+use rjsyn::dsl::Expr;
+use rjsyn::dsl::{self};
+use rjsyn::read_json_examples;
+use rjsyn::run_synth;
 use rjsyn::synth::SynthResult;
-use rjsyn::types::{infer_value_type, ValTy};
-use rjsyn::{read_json_examples, run_synth, JsonExample};
+use rjsyn::types::infer_value_type;
+use rjsyn::types::ValTy;
+use rjsyn::JsonExample;
 
 struct TestTask {
     name: &'static str,
