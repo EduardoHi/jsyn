@@ -1,4 +1,3 @@
-use crate::dsl::sexpr::{expr_to_sexpr, h_expr_to_sexpr};
 use crate::dsl::{consistent, Expr, HExpr, Program};
 use crate::json_example::JsonExample;
 use crate::types::{infer_vt_examples, Ty, ValTy};
@@ -43,7 +42,7 @@ fn run_synth_impl(time_limit: Duration, examples: &[JsonExample], verbose: bool)
     if verbose {
         eprintln!("QUEUE seeded={} visited=0", queue.len());
         for item in queue.iter() {
-            eprintln!("QUEUE\n  {}", h_expr_to_sexpr(item));
+            eprintln!("QUEUE\n  {}", item.to_sexpr());
         }
     }
 
@@ -69,11 +68,11 @@ fn run_synth_impl(time_limit: Duration, examples: &[JsonExample], verbose: bool)
             if let Some(closed_expr) = h_expr_to_expr(&candidate) {
                 if consistent(examples, &closed_expr) {
                     if verbose {
-                        eprintln!("CONSISTENT\n  {}", expr_to_sexpr(&closed_expr));
+                        eprintln!("CONSISTENT\n  {}", closed_expr.to_sexpr());
                     }
                     return SynthResult::Program(Program { body: closed_expr });
                 } else if verbose {
-                    eprintln!("INCONSISTENT\n  {}", expr_to_sexpr(&closed_expr));
+                    eprintln!("INCONSISTENT\n  {}", closed_expr.to_sexpr());
                 }
             }
             continue;
@@ -88,7 +87,7 @@ fn run_synth_impl(time_limit: Duration, examples: &[JsonExample], verbose: bool)
                 examined
             );
             for item in &expansions {
-                eprintln!("  {}", h_expr_to_sexpr(item));
+                eprintln!("  {}", item.to_sexpr());
             }
         }
 

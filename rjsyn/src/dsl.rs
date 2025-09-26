@@ -32,6 +32,40 @@ impl Expr {
     pub fn constant_string<S: Into<String>>(s: S) -> Self {
         Expr::Const(Value::String(s.into()))
     }
+
+    pub fn to_sexpr(&self) -> String {
+        match self {
+            Expr::Const(value) => {
+                let json = serde_json::to_string(value).unwrap_or_else(|_| "<invalid>".to_string());
+                format!("(const {})", json)
+            }
+            Expr::Id => "(id)".to_string(),
+            Expr::Keys => "(keys)".to_string(),
+            Expr::Elements => "(elements)".to_string(),
+            Expr::Flatten => "(flatten)".to_string(),
+            Expr::ToList => "(tolist)".to_string(),
+            Expr::Get(inner) => format!("(get {})", inner.to_sexpr()),
+            Expr::Map(inner) => format!("(map {})", inner.to_sexpr()),
+            Expr::Equal(lhs, rhs) => format!("(equal {} {})", lhs.to_sexpr(), rhs.to_sexpr()),
+            Expr::Not(inner) => format!("(not {})", inner.to_sexpr()),
+            Expr::And(lhs, rhs) => format!("(and {} {})", lhs.to_sexpr(), rhs.to_sexpr()),
+            Expr::Or(lhs, rhs) => format!("(or {} {})", lhs.to_sexpr(), rhs.to_sexpr()),
+            Expr::Construct(fields) => {
+                let parts = fields
+                    .iter()
+                    .map(|(key, value)| format!("({} {})", key.to_sexpr(), value.to_sexpr()))
+                    .collect::<Vec<_>>();
+                if parts.is_empty() {
+                    "(construct)".to_string()
+                } else {
+                    format!("(construct {})", parts.join(" "))
+                }
+            }
+            Expr::Union(lhs, rhs) => format!("(union {} {})", lhs.to_sexpr(), rhs.to_sexpr()),
+            Expr::Pipe(lhs, rhs) => format!("(pipe {} {})", lhs.to_sexpr(), rhs.to_sexpr()),
+            Expr::Concat(lhs, rhs) => format!("(concat {} {})", lhs.to_sexpr(), rhs.to_sexpr()),
+        }
+    }
 }
 
 #[derive(Debug, Error, Clone, PartialEq)]
@@ -245,6 +279,41 @@ pub(crate) enum HExpr {
     ToList,
     Flatten,
     Hole(Ty),
+}
+
+impl HExpr {
+    pub fn to_sexpr(&self) -> String {
+        match self {
+            HExpr::Get(key) => format!("(get {:?})", key),
+            HExpr::Equal(lhs, rhs) => format!("(equal {} {})", lhs.to_sexpr(), rhs.to_sexpr()),
+            HExpr::Not(inner) => format!("(not {})", inner.to_sexpr()),
+            HExpr::And(lhs, rhs) => format!("(and {} {})", lhs.to_sexpr(), rhs.to_sexpr()),
+            HExpr::Or(lhs, rhs) => format!("(or {} {})", lhs.to_sexpr(), rhs.to_sexpr()),
+            HExpr::Construct(fields) => {
+                let parts = fields
+                    .iter()
+                    .map(|(key, value)| format!("({:?} {})", key, value.to_sexpr()))
+                    .collect::<Vec<_>>();
+                if parts.is_empty() {
+                    "(construct)".to_string()
+                } else {
+                    format!("(construct {})", parts.join(" "))
+                }
+            }
+            HExpr::Pipe(lhs, rhs, _ty) => {
+                format!("(pipe {} {})", lhs.to_sexpr(), rhs.to_sexpr())
+            }
+            HExpr::Map(inner, _elem_ty) => {
+                format!("(map {})", inner.to_sexpr())
+            }
+            HExpr::Concat(lhs, rhs) => {
+                format!("(concat {} {})", lhs.to_sexpr(), rhs.to_sexpr())
+            }
+            HExpr::ToList => "(tolist)".to_string(),
+            HExpr::Flatten => "(flatten)".to_string(),
+            HExpr::Hole(ty) => format!("(hole {})", ty.to_sexpr()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

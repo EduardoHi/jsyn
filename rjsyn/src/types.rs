@@ -15,6 +15,13 @@ impl Ty {
     pub fn tarrow(input: ValTy, output: ValTy) -> Self {
         Ty::Arrow(Box::new(Ty::Val(input)), Box::new(Ty::Val(output)))
     }
+
+    pub fn to_sexpr(&self) -> String {
+        match self {
+            Ty::Arrow(lhs, rhs) => format!("(arrow {} {})", lhs.to_sexpr(), rhs.to_sexpr()),
+            Ty::Val(val) => val.to_sexpr(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -27,6 +34,12 @@ pub enum ValTy {
     Number,
     Bool,
     Null,
+}
+
+impl ValTy {
+    pub fn to_sexpr(&self) -> String {
+        sexpr::format_valty_compact(self)
+    }
 }
 
 impl fmt::Display for Ty {
