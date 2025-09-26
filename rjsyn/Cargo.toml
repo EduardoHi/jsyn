@@ -15,3 +15,8 @@ nom = "7"
 
 [dev-dependencies]
 insta = { version = "1", features = ["yaml"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "synth"
+harness = false
