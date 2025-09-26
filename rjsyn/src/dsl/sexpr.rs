@@ -40,11 +40,11 @@ pub fn parse_expr_sexpr(input: &str) -> Result<Expr, ExprParseError> {
     }
 }
 
-fn expr(input: &str) -> NomResult<Expr> {
+fn expr(input: &str) -> NomResult<'_, Expr> {
     delimited(ws(char('(')), cut(list_expr), ws(char(')')))(input)
 }
 
-fn list_expr(input: &str) -> NomResult<Expr> {
+fn list_expr(input: &str) -> NomResult<'_, Expr> {
     let (input, head) = ws(symbol)(input)?;
     match head.as_str() {
         "const" => const_expr(input),
@@ -69,11 +69,11 @@ fn list_expr(input: &str) -> NomResult<Expr> {
     }
 }
 
-fn no_arg_expr(input: &str, expr: Expr) -> NomResult<Expr> {
+fn no_arg_expr(input: &str, expr: Expr) -> NomResult<'_, Expr> {
     Ok((input, expr))
 }
 
-fn unary_expr<F>(input: &str, constructor: F) -> NomResult<Expr>
+fn unary_expr<F>(input: &str, constructor: F) -> NomResult<'_, Expr>
 where
     F: Fn(Box<Expr>) -> Expr,
 {
@@ -81,7 +81,7 @@ where
     Ok((input, constructor(Box::new(value))))
 }
 
-fn binary_expr<F>(input: &str, constructor: F) -> NomResult<Expr>
+fn binary_expr<F>(input: &str, constructor: F) -> NomResult<'_, Expr>
 where
     F: Fn(Box<Expr>, Box<Expr>) -> Expr,
 {
@@ -90,17 +90,17 @@ where
     Ok((input, constructor(Box::new(lhs), Box::new(rhs))))
 }
 
-fn const_expr(input: &str) -> NomResult<Expr> {
+fn const_expr(input: &str) -> NomResult<'_, Expr> {
     let (input, value) = ws(json_value)(input)?;
     Ok((input, Expr::Const(value)))
 }
 
-fn construct_expr(input: &str) -> NomResult<Expr> {
+fn construct_expr(input: &str) -> NomResult<'_, Expr> {
     let (input, fields) = many0(ws(construct_field))(input)?;
     Ok((input, Expr::Construct(fields)))
 }
 
-fn construct_field(input: &str) -> NomResult<(Expr, Expr)> {
+fn construct_field(input: &str) -> NomResult<'_, (Expr, Expr)> {
     delimited(
         ws(char('(')),
         cut(tuple((ws(expr), ws(expr)))),
@@ -108,7 +108,7 @@ fn construct_field(input: &str) -> NomResult<(Expr, Expr)> {
     )(input)
 }
 
-fn symbol(input: &str) -> NomResult<String> {
+fn symbol(input: &str) -> NomResult<'_, String> {
     let (input, value) =
         take_while1(|ch: char| !ch.is_whitespace() && ch != '(' && ch != ')')(input)?;
     Ok((input, value.to_string()))
@@ -126,7 +126,7 @@ where
     }
 }
 
-fn json_value(input: &str) -> NomResult<Value> {
+fn json_value(input: &str) -> NomResult<'_, Value> {
     match take_json_raw(input) {
         Some((raw, rest)) => match serde_json::from_str::<Value>(raw) {
             Ok(value) => Ok((rest, value)),

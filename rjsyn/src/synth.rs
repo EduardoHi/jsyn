@@ -66,7 +66,7 @@ fn run_synth_impl(time_limit: Duration, examples: &[JsonExample], verbose: bool)
         visited.push(candidate.clone());
         examined += 1;
 
-        if verbose && examined % 100 == 0 {
+        if verbose && examined.is_multiple_of(100) {
             eprintln!("STATS examined={} pending={}", examined, queue.len());
         }
 

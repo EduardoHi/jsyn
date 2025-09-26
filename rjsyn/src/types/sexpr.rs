@@ -149,11 +149,11 @@ pub fn parse_valty_sexpr(input: &str) -> Result<ValTy, ValTyParseError> {
     }
 }
 
-fn valty_expr(input: &str) -> NomResult<ValTy> {
+fn valty_expr(input: &str) -> NomResult<'_, ValTy> {
     alt((object_expr, array_expr, atom_expr))(input)
 }
 
-fn atom_expr(input: &str) -> NomResult<ValTy> {
+fn atom_expr(input: &str) -> NomResult<'_, ValTy> {
     ws(alt((
         value(ValTy::Value, tag("value")),
         value(ValTy::String, tag("string")),
@@ -163,7 +163,7 @@ fn atom_expr(input: &str) -> NomResult<ValTy> {
     )))(input)
 }
 
-fn array_expr(input: &str) -> NomResult<ValTy> {
+fn array_expr(input: &str) -> NomResult<'_, ValTy> {
     let (input, inner) = delimited(
         ws(char('(')),
         preceded(ws(tag("array")), cut(valty_expr)),
@@ -172,7 +172,7 @@ fn array_expr(input: &str) -> NomResult<ValTy> {
     Ok((input, ValTy::Array(Box::new(inner))))
 }
 
-fn object_expr(input: &str) -> NomResult<ValTy> {
+fn object_expr(input: &str) -> NomResult<'_, ValTy> {
     let (input, entries) = delimited(
         ws(char('(')),
         preceded(ws(tag("object")), many0(ws(object_field))),
@@ -203,7 +203,7 @@ fn entries_to_map(
     Ok(map)
 }
 
-fn object_field(input: &str) -> NomResult<(String, ValTy)> {
+fn object_field(input: &str) -> NomResult<'_, (String, ValTy)> {
     let (input, (key, value)) = delimited(
         ws(char('(')),
         cut(tuple((ws(string_literal), valty_expr))),
@@ -212,7 +212,7 @@ fn object_field(input: &str) -> NomResult<(String, ValTy)> {
     Ok((input, (key, value)))
 }
 
-fn string_literal(input: &str) -> NomResult<String> {
+fn string_literal(input: &str) -> NomResult<'_, String> {
     let escaped = escaped_transform(
         is_not("\\\""),
         '\\',
