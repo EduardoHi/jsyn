@@ -1,4 +1,5 @@
-use crate::dsl::{consistent, Expr, Program};
+use crate::dsl::sexpr::{expr_to_sexpr, h_expr_to_sexpr};
+use crate::dsl::{consistent, Expr, HExpr, Program};
 use crate::json_example::JsonExample;
 use crate::types::{infer_vt_examples, Ty, ValTy};
 use serde_json::Value;
@@ -10,22 +11,6 @@ pub enum SynthResult {
     Program(Program),
     ProgramNotFound,
     Timeout,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HExpr {
-    Get(String),
-    Equal(Box<HExpr>, Box<HExpr>),
-    Not(Box<HExpr>),
-    And(Box<HExpr>, Box<HExpr>),
-    Or(Box<HExpr>, Box<HExpr>),
-    Construct(Vec<(String, HExpr)>),
-    Pipe(Box<HExpr>, Box<HExpr>, ValTy),
-    Map(Box<HExpr>, ValTy),
-    Concat(Box<HExpr>, Box<HExpr>),
-    ToList,
-    Flatten,
-    Hole(Ty),
 }
 
 type Context = ValTy;
@@ -118,114 +103,6 @@ fn run_synth_impl(time_limit: Duration, examples: &[JsonExample], verbose: bool)
         eprintln!("RESULT exhausted examined={}", examined);
     }
     SynthResult::ProgramNotFound
-}
-
-fn h_expr_to_sexpr(expr: &HExpr) -> String {
-    match expr {
-        HExpr::Get(key) => format!("(get {:?})", key),
-        HExpr::Equal(lhs, rhs) => format!(
-            "(equal {} {})",
-            h_expr_to_sexpr(lhs),
-            h_expr_to_sexpr(rhs)
-        ),
-        HExpr::Not(inner) => format!("(not {})", h_expr_to_sexpr(inner)),
-        HExpr::And(lhs, rhs) => format!(
-            "(and {} {})",
-            h_expr_to_sexpr(lhs),
-            h_expr_to_sexpr(rhs)
-        ),
-        HExpr::Or(lhs, rhs) => format!(
-            "(or {} {})",
-            h_expr_to_sexpr(lhs),
-            h_expr_to_sexpr(rhs)
-        ),
-        HExpr::Construct(fields) => {
-            let parts = fields
-                .iter()
-                .map(|(key, value)| format!("({:?} {})", key, h_expr_to_sexpr(value)))
-                .collect::<Vec<_>>();
-            if parts.is_empty() {
-                "(construct)".to_string()
-            } else {
-                format!("(construct {})", parts.join(" "))
-            }
-        }
-        HExpr::Pipe(lhs, rhs, ty) => format!(
-            "(pipe {:?} {} {})",
-            ty,
-            h_expr_to_sexpr(lhs),
-            h_expr_to_sexpr(rhs)
-        ),
-        HExpr::Map(inner, elem_ty) => {
-            format!("(map {:?} {})", elem_ty, h_expr_to_sexpr(inner))
-        }
-        HExpr::Concat(lhs, rhs) => format!(
-            "(concat {} {})",
-            h_expr_to_sexpr(lhs),
-            h_expr_to_sexpr(rhs)
-        ),
-        HExpr::ToList => "(tolist)".to_string(),
-        HExpr::Flatten => "(flatten)".to_string(),
-        HExpr::Hole(ty) => format!("(hole {:?})", ty),
-    }
-}
-
-fn expr_to_sexpr(expr: &Expr) -> String {
-    match expr {
-        Expr::Const(value) => {
-            let json = serde_json::to_string(value).unwrap_or_else(|_| "<invalid>".to_string());
-            format!("(const {})", json)
-        }
-        Expr::Id => "(id)".to_string(),
-        Expr::Keys => "(keys)".to_string(),
-        Expr::Elements => "(elements)".to_string(),
-        Expr::Flatten => "(flatten)".to_string(),
-        Expr::ToList => "(tolist)".to_string(),
-        Expr::Get(inner) => format!("(get {})", expr_to_sexpr(inner)),
-        Expr::Map(inner) => format!("(map {})", expr_to_sexpr(inner)),
-        Expr::Equal(lhs, rhs) => format!(
-            "(equal {} {})",
-            expr_to_sexpr(lhs),
-            expr_to_sexpr(rhs)
-        ),
-        Expr::Not(inner) => format!("(not {})", expr_to_sexpr(inner)),
-        Expr::And(lhs, rhs) => format!(
-            "(and {} {})",
-            expr_to_sexpr(lhs),
-            expr_to_sexpr(rhs)
-        ),
-        Expr::Or(lhs, rhs) => format!(
-            "(or {} {})",
-            expr_to_sexpr(lhs),
-            expr_to_sexpr(rhs)
-        ),
-        Expr::Construct(fields) => {
-            let parts = fields
-                .iter()
-                .map(|(key, value)| format!("({} {})", expr_to_sexpr(key), expr_to_sexpr(value)))
-                .collect::<Vec<_>>();
-            if parts.is_empty() {
-                "(construct)".to_string()
-            } else {
-                format!("(construct {})", parts.join(" "))
-            }
-        }
-        Expr::Union(lhs, rhs) => format!(
-            "(union {} {})",
-            expr_to_sexpr(lhs),
-            expr_to_sexpr(rhs)
-        ),
-        Expr::Pipe(lhs, rhs) => format!(
-            "(pipe {} {})",
-            expr_to_sexpr(lhs),
-            expr_to_sexpr(rhs)
-        ),
-        Expr::Concat(lhs, rhs) => format!(
-            "(concat {} {})",
-            expr_to_sexpr(lhs),
-            expr_to_sexpr(rhs)
-        ),
-    }
 }
 
 fn is_closed(expr: &HExpr) -> bool {

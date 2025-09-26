@@ -5,6 +5,7 @@ use std::time::Duration;
 use anyhow::Context;
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 
+use rjsyn::dsl::sexpr::parse_program_sexpr;
 use rjsyn::{read_json_examples, run_synth, types::sexpr::format_valty_pretty, SynthResult};
 
 #[derive(Parser, Debug)]
@@ -35,6 +36,13 @@ enum Commands {
         #[arg(short = 'f', long, action = ArgAction::SetTrue)]
         freeform: bool,
     },
+    /// Evaluate a program written in the DSL S-expression form against a JSON value
+    Eval {
+        /// Path to the S-expression program
+        program: PathBuf,
+        /// Path to JSON file containing a single value
+        json: PathBuf,
+    },
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -51,7 +59,8 @@ fn main() -> anyhow::Result<()> {
             file,
             verbose,
         } => synth_command(lang, file, verbose),
-        Commands::Infer { file , freeform} => infer_command(file, freeform),
+        Commands::Infer { file, freeform } => infer_command(file, freeform),
+        Commands::Eval { program, json } => eval_command(program, json),
     }
 }
 
@@ -95,7 +104,33 @@ fn infer_command(file: PathBuf, freeform: bool) -> anyhow::Result<()> {
             .with_context(|| format!("reading examples from {}", file_display))?;
         let (in_inferred, out_inferred) = rjsyn::types::infer_vt_examples(&examples);
 
-        println!("INPUT\n{}\nOUTPUT\n{}\n", format_valty_pretty(&in_inferred), format_valty_pretty(&out_inferred));
+        println!(
+            "INPUT\n{}\nOUTPUT\n{}\n",
+            format_valty_pretty(&in_inferred),
+            format_valty_pretty(&out_inferred)
+        );
     }
+    Ok(())
+}
+
+fn eval_command(program_path: PathBuf, json_path: PathBuf) -> anyhow::Result<()> {
+    let program_display = program_path.display().to_string();
+    let program_source = fs::read_to_string(&program_path)
+        .with_context(|| format!("reading program from {}", program_display))?;
+    let program = parse_program_sexpr(&program_source)
+        .with_context(|| format!("parsing program from {}", program_display))?;
+
+    let json_display = json_path.display().to_string();
+    let json_source = fs::read_to_string(&json_path)
+        .with_context(|| format!("reading json from {}", json_display))?;
+    let json_value: serde_json::Value = serde_json::from_str(&json_source)
+        .with_context(|| format!("parsing json value from {}", json_display))?;
+
+    let result = rjsyn::dsl::eval(&program.body, &json_value)?;
+
+    let rendered =
+        serde_json::to_string_pretty(&result).context("serialising evaluation result")?;
+    println!("{}", rendered);
+
     Ok(())
 }

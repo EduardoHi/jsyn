@@ -1,4 +1,9 @@
-use crate::json_example::JsonExample;
+pub mod sexpr;
+
+use crate::{
+    json_example::JsonExample,
+    types::{Ty, ValTy},
+};
 use serde_json::Value;
 use std::fmt;
 use thiserror::Error;
@@ -224,6 +229,22 @@ fn flatten(value: &Value) -> Result<Value, EvalError> {
         flattened.extend(inner.iter().cloned());
     }
     Ok(Value::Array(flattened))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum HExpr {
+    Get(String),
+    Equal(Box<HExpr>, Box<HExpr>),
+    Not(Box<HExpr>),
+    And(Box<HExpr>, Box<HExpr>),
+    Or(Box<HExpr>, Box<HExpr>),
+    Construct(Vec<(String, HExpr)>),
+    Pipe(Box<HExpr>, Box<HExpr>, ValTy),
+    Map(Box<HExpr>, ValTy),
+    Concat(Box<HExpr>, Box<HExpr>),
+    ToList,
+    Flatten,
+    Hole(Ty),
 }
 
 #[derive(Debug, Clone, PartialEq)]

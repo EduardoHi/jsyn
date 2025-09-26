@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use criterion::{black_box, BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use rjsyn::{read_json_examples, run_synth, JsonExample, SynthResult};
 
 const TIME_LIMIT: Duration = Duration::from_secs(30);
@@ -12,27 +12,68 @@ struct Fixture {
 }
 
 const FIXTURES: &[Fixture] = &[
-    Fixture { name: "test1", file: "test1.json" },
-    Fixture { name: "test2", file: "test2.json" },
-    Fixture { name: "test3", file: "test3.json" },
-    Fixture { name: "test4", file: "test4.json" },
-    Fixture { name: "test5", file: "test5.json" },
-    Fixture { name: "test6", file: "test6.json" },
-    Fixture { name: "test7", file: "test7.json" },
-    Fixture { name: "test8", file: "test8.json" },
-    Fixture { name: "test9", file: "test9.json" },
-    Fixture { name: "test10", file: "test10.json" },
-    Fixture { name: "test11", file: "test11.json" },
-    Fixture { name: "test12", file: "test12.json" },
-    Fixture { name: "test13", file: "test13.json" },
+    Fixture {
+        name: "test1",
+        file: "test1.json",
+    },
+    Fixture {
+        name: "test2",
+        file: "test2.json",
+    },
+    Fixture {
+        name: "test3",
+        file: "test3.json",
+    },
+    Fixture {
+        name: "test4",
+        file: "test4.json",
+    },
+    Fixture {
+        name: "test5",
+        file: "test5.json",
+    },
+    Fixture {
+        name: "test6",
+        file: "test6.json",
+    },
+    Fixture {
+        name: "test7",
+        file: "test7.json",
+    },
+    Fixture {
+        name: "test8",
+        file: "test8.json",
+    },
+    Fixture {
+        name: "test9",
+        file: "test9.json",
+    },
+    Fixture {
+        name: "test10",
+        file: "test10.json",
+    },
+    Fixture {
+        name: "test11",
+        file: "test11.json",
+    },
+    Fixture {
+        name: "test12",
+        file: "test12.json",
+    },
+    Fixture {
+        name: "test13",
+        file: "test13.json",
+    },
     // Matches the Haskell suite, where test14 and test16 currently timeout
-    Fixture { name: "test15", file: "test15.json" },
+    Fixture {
+        name: "test15",
+        file: "test15.json",
+    },
 ];
 
 fn load_examples(path: &Path) -> Vec<JsonExample> {
-    read_json_examples(path).unwrap_or_else(|err| {
-        panic!("failed to load {}: {}", path.display(), err)
-    })
+    read_json_examples(path)
+        .unwrap_or_else(|err| panic!("failed to load {}: {}", path.display(), err))
 }
 
 fn tests_dir() -> PathBuf {
